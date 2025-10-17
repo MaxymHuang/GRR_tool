@@ -325,7 +325,7 @@ def create_anova_table(results: Dict) -> pd.DataFrame:
         results: Results dictionary from perform_anova_grr
         
     Returns:
-        DataFrame with ANOVA table
+        DataFrame with ANOVA table (4 significant figures)
     """
     if results is None:
         return None
@@ -333,19 +333,19 @@ def create_anova_table(results: Dict) -> pd.DataFrame:
     table_data = {
         'Source': ['Repeatability', 'Total Variation', 'Total GR&R(P/T)'],
         'StdDev(SD)': [
-            results['std_dev']['repeatability'],
-            results['std_dev']['total'],
-            results['std_dev']['grr']
+            f"{results['std_dev']['repeatability']:.4g}",
+            f"{results['std_dev']['total']:.4g}",
+            f"{results['std_dev']['grr']:.4g}"
         ],
         'StdVar(6*Std)': [
-            results['study_var']['repeatability'],
-            results['study_var']['total'],
-            results['study_var']['grr']
+            f"{results['study_var']['repeatability']:.4g}",
+            f"{results['study_var']['total']:.4g}",
+            f"{results['study_var']['grr']:.4g}"
         ],
         '%Std Var(%SV)': [
-            f"{results['pct_study_var']['repeatability']:.2f}%",
-            "100.00%",
-            f"{results['pct_study_var']['grr']:.2f}%"
+            f"{results['pct_study_var']['repeatability']:.4g}%",
+            "100.0%",
+            f"{results['pct_study_var']['grr']:.4g}%"
         ]
     }
     
@@ -643,6 +643,205 @@ def plot_algo_by_operator(df: pd.DataFrame, measurement_col: str, output_path: s
     print(f"Saved: {output_path}")
 
 
+def plot_merged_charts(df: pd.DataFrame, results: Dict, measurement_col: str, output_path: str):
+    """
+    Generate merged chart combining all 4 visualizations into a single image.
+    
+    Creates a 2x2 grid with:
+    - Top-left: Components of Variation
+    - Top-right: Algorithm by Component
+    - Bottom-left: S Chart by Operator
+    - Bottom-right: Algorithm Type by Operator
+    """
+    fig = plt.figure(figsize=(20, 16))
+    
+    # Create 2x2 grid
+    gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+    
+    # 1. Components of Variation (top-left)
+    ax1 = fig.add_subplot(gs[0, 0])
+    pct_sv = results['pct_study_var']
+    pct_contrib = results['pct_contribution']
+    
+    components = ['Gage R&R', 'Repeat', 'Reproduce', 'Part-to-Part']
+    contribution_values = [
+        pct_contrib['grr'], pct_contrib['repeatability'],
+        pct_contrib['reproducibility'], pct_contrib['part']
+    ]
+    study_var_values = [
+        pct_sv['grr'], pct_sv['repeatability'],
+        pct_sv['reproducibility'], pct_sv['part']
+    ]
+    
+    x = np.arange(len(components))
+    width = 0.35
+    bars1 = ax1.bar(x - width/2, contribution_values, width, 
+                    label='% Contribution', color='orange', alpha=0.8)
+    bars2 = ax1.bar(x + width/2, study_var_values, width, 
+                    label='% Study Var', color='green', alpha=0.8)
+    
+    ax1.set_ylabel('Percent', fontsize=11)
+    ax1.set_title("Components of Variation", fontsize=12, fontweight='bold')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(components)
+    ax1.legend(fontsize=9)
+    ax1.set_ylim(0, 110)
+    ax1.grid(axis='y', alpha=0.3)
+    
+    for bars in [bars1, bars2]:
+        for bar in bars:
+            height = bar.get_height()
+            if height > 0.5:
+                ax1.text(bar.get_x() + bar.get_width()/2., height,
+                        f'{height:.1f}', ha='center', va='bottom', fontsize=8)
+    
+    # 2. Algorithm by Component (top-right)
+    ax2 = fig.add_subplot(gs[0, 1])
+    data = df[['Component', measurement_col]].copy().dropna()
+    component_means = data.groupby('Component')[measurement_col].mean().sort_index()
+    
+    if len(component_means) > 50:
+        component_means = component_means.head(50)
+    
+    components_list = component_means.index.tolist()
+    values = component_means.values
+    
+    ax2.plot(components_list, values, marker='o', linewidth=2, markersize=5, 
+            color='#1f77b4', markerfacecolor='white', markeredgewidth=2, 
+            markeredgecolor='#1f77b4')
+    
+    ax2.set_ylabel(measurement_col, fontsize=11)
+    ax2.set_xlabel('Comp_Name', fontsize=11)
+    ax2.set_title(f"{measurement_col} by Comp_Name", fontsize=12, fontweight='bold')
+    ax2.grid(axis='both', alpha=0.3)
+    
+    label_frequency = max(1, len(components_list) // 15)
+    for i in range(0, len(components_list), label_frequency):
+        ax2.text(i, values[i], f'{values[i]:.1f}',
+                ha='center', va='bottom', fontsize=7, rotation=45)
+    
+    plt.setp(ax2.xaxis.get_majorticklabels(), rotation=90, ha='right', fontsize=7)
+    
+    # 3. S Chart by Operator (bottom-left)
+    ax3 = fig.add_subplot(gs[1, 0])
+    data_s = df[['Part', 'Operator', measurement_col]].copy().dropna()
+    
+    if len(data_s) > 0:
+        group_sizes = data_s.groupby(['Operator', 'Part']).size()
+        has_replicates = (group_sizes > 1).any()
+        
+        if not has_replicates:
+            mr_data = []
+            for operator in data_s['Operator'].unique():
+                op_data = data_s[data_s['Operator'] == operator].sort_index()
+                measurements = op_data[measurement_col].values
+                if len(measurements) > 1:
+                    moving_ranges = np.abs(np.diff(measurements))
+                    for i, mr in enumerate(moving_ranges):
+                        mr_data.append({'Operator': operator, 'Index': i, 'MR': mr})
+            
+            mr_df = pd.DataFrame(mr_data)
+            mr_bar = mr_df['MR'].mean()
+            s_bar = mr_bar / 1.128
+            ucl = 3.267 * mr_bar / 1.128
+            lcl = 0
+            s_values = mr_df.rename(columns={'MR': 'S'})
+        else:
+            s_values = data_s.groupby(['Operator', 'Part'])[measurement_col].std().reset_index()
+            s_values.columns = ['Operator', 'Part', 'S']
+            s_values = s_values.dropna()
+            s_bar = s_values['S'].mean()
+            n = data_s.groupby(['Operator', 'Part']).size().mean()
+            if n > 1:
+                factor = 3 / np.sqrt(2 * (n - 1))
+                ucl = s_bar * (1 + factor)
+                lcl = max(0, s_bar * (1 - factor))
+            else:
+                ucl = s_bar * 2
+                lcl = 0
+        
+        operators = sorted(s_values['Operator'].unique())
+        colors = {'A': '#1f77b4', 'B': '#ff7f0e', 'C': '#2ca02c'}
+        
+        x_pos = 0
+        x_ticks = []
+        x_labels = []
+        operator_boundaries = []
+        
+        for i, operator in enumerate(operators):
+            op_data = s_values[s_values['Operator'] == operator].copy()
+            n_points = len(op_data)
+            x_positions = np.arange(x_pos, x_pos + n_points)
+            ax3.scatter(x_positions, op_data['S'].values, 
+                       color=colors.get(operator, 'gray'), 
+                       label=f'Operator {operator}', s=30, alpha=0.7)
+            ax3.plot(x_positions, op_data['S'].values, 
+                    color=colors.get(operator, 'gray'), alpha=0.3, linewidth=1)
+            
+            x_ticks.append(x_pos + n_points / 2)
+            x_labels.append(f'OP {operator}')
+            if i < len(operators) - 1:
+                operator_boundaries.append(x_pos + n_points - 0.5)
+            x_pos += n_points
+        
+        ax3.axhline(y=s_bar, color='green', linestyle='-', linewidth=1.5, label=f'S̄={s_bar:.3f}')
+        ax3.axhline(y=ucl, color='red', linestyle='--', linewidth=1.5, label=f'UCL={ucl:.3f}')
+        ax3.axhline(y=lcl, color='red', linestyle='--', linewidth=1.5, label=f'LCL={lcl:.3f}')
+        
+        for boundary in operator_boundaries:
+            ax3.axvline(x=boundary, color='gray', linestyle=':', alpha=0.5)
+        
+        ax3.set_ylabel('Sample Std Dev', fontsize=11)
+        ax3.set_xlabel('Operator', fontsize=11)
+        ax3.set_title("S Chart by Operator", fontsize=12, fontweight='bold')
+        ax3.set_xticks(x_ticks)
+        ax3.set_xticklabels(x_labels)
+        ax3.legend(loc='best', fontsize=8)
+        ax3.grid(axis='y', alpha=0.3)
+    
+    # 4. Algorithm Type by Operator (bottom-right)
+    ax4 = fig.add_subplot(gs[1, 1])
+    data_box = df[['Operator', measurement_col]].copy().dropna()
+    
+    if len(data_box) > 0:
+        operators = sorted(data_box['Operator'].unique())
+        plot_data = [data_box[data_box['Operator'] == op][measurement_col].values for op in operators]
+        
+        bp = ax4.boxplot(plot_data, labels=operators, patch_artist=True,
+                        showmeans=True, meanline=True, widths=0.6)
+        
+        colors_box = ['#1f77b4', '#ff7f0e', '#2ca02c']
+        for patch, color in zip(bp['boxes'], colors_box):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.6)
+        
+        for median in bp['medians']:
+            median.set(color='red', linewidth=2)
+        for mean in bp['means']:
+            mean.set(color='black', linewidth=2)
+        
+        ax4.set_xlabel('OP', fontsize=11)
+        ax4.set_ylabel(measurement_col, fontsize=11)
+        ax4.set_title(f"{measurement_col} by OP", fontsize=12, fontweight='bold')
+        ax4.grid(axis='y', alpha=0.3)
+        
+        for i, op in enumerate(operators):
+            op_data = data_box[data_box['Operator'] == op][measurement_col]
+            mean_val = op_data.mean()
+            median_val = op_data.median()
+            ax4.text(i+1, ax4.get_ylim()[1]*0.97, f'μ={mean_val:.2f}\nM={median_val:.2f}',
+                    ha='center', va='top', fontsize=8, 
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+    
+    # Add overall title
+    fig.suptitle(f'Gage R&R Analysis - {measurement_col}', 
+                fontsize=14, fontweight='bold', y=0.995)
+    
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved merged chart: {output_path}")
+
+
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -661,16 +860,16 @@ Examples:
   
   # List available algorithms
   python gage_rr_analysis.py --list
+  
+  # Parse data and save to CSV without analysis
+  python gage_rr_analysis.py -p
+  python gage_rr_analysis.py -p -o MyData_
         """
     )
     
     parser.add_argument('-f', '--file', 
                        default='/Users/maxymhuang/GRR_plots/EMI_20um_SV.txt',
                        help='Input data file path (default: EMI_20um_SV.txt)')
-    
-    parser.add_argument('-i', '--input',
-                       dest='file',
-                       help='Input data file path (alias for -f/--file)')
     
     parser.add_argument('--algo', '--algorithm',
                        default='Solder_ThicknessN1_Layer3',
@@ -694,6 +893,14 @@ Examples:
                        default='',
                        help='Prefix for output files (default: none)')
     
+    parser.add_argument('-m', '--merge',
+                       action='store_true',
+                       help='Merge all 4 charts into a single image (only outputs merged chart)')
+    
+    parser.add_argument('-p', '--parse',
+                       action='store_true',
+                       help='Parse and save cleaned data to CSV file, then exit (no analysis)')
+    
     return parser.parse_args()
 
 
@@ -708,6 +915,19 @@ def main():
     # Load and clean data
     print(f"\nInput file: {args.file}")
     df = load_and_clean_data(args.file)
+    
+    # If -p flag is set, save parsed data and exit
+    if args.parse:
+        prefix = args.output_prefix
+        output_file = f'{prefix}parsed_data.csv'
+        df.to_csv(output_file, index=False)
+        print(f"\n{'='*70}")
+        print("PARSED DATA SAVED")
+        print(f"{'='*70}")
+        print(f"\nCleaned data saved to: {output_file}")
+        print(f"Shape: {df.shape[0]} rows × {df.shape[1]} columns")
+        print(f"\nColumns: {list(df.columns)}")
+        return
     
     # Identify measurement columns (all numeric columns except Comp_Name)
     measurement_cols = [col for col in df.columns 
@@ -764,32 +984,32 @@ def main():
         variance_summary = pd.DataFrame({
             'Component': ['Repeatability', 'Reproducibility', 'Gage R&R', 'Part-to-Part', 'Total'],
             'Variance': [
-                results['variance_components']['repeatability'],
-                results['variance_components']['reproducibility'],
-                results['variance_components']['grr'],
-                results['variance_components']['part'],
-                results['variance_components']['total']
+                f"{results['variance_components']['repeatability']:.4g}",
+                f"{results['variance_components']['reproducibility']:.4g}",
+                f"{results['variance_components']['grr']:.4g}",
+                f"{results['variance_components']['part']:.4g}",
+                f"{results['variance_components']['total']:.4g}"
             ],
             'Std Dev': [
-                results['std_dev']['repeatability'],
-                results['std_dev']['reproducibility'],
-                results['std_dev']['grr'],
-                results['std_dev']['part'],
-                results['std_dev']['total']
+                f"{results['std_dev']['repeatability']:.4g}",
+                f"{results['std_dev']['reproducibility']:.4g}",
+                f"{results['std_dev']['grr']:.4g}",
+                f"{results['std_dev']['part']:.4g}",
+                f"{results['std_dev']['total']:.4g}"
             ],
             '%Contribution': [
-                results['pct_contribution']['repeatability'],
-                results['pct_contribution']['reproducibility'],
-                results['pct_contribution']['grr'],
-                results['pct_contribution']['part'],
-                100.0
+                f"{results['pct_contribution']['repeatability']:.4g}",
+                f"{results['pct_contribution']['reproducibility']:.4g}",
+                f"{results['pct_contribution']['grr']:.4g}",
+                f"{results['pct_contribution']['part']:.4g}",
+                "100.0"
             ],
             '%Study Var': [
-                results['pct_study_var']['repeatability'],
-                results['pct_study_var']['reproducibility'],
-                results['pct_study_var']['grr'],
-                results['pct_study_var']['part'],
-                100.0
+                f"{results['pct_study_var']['repeatability']:.4g}",
+                f"{results['pct_study_var']['reproducibility']:.4g}",
+                f"{results['pct_study_var']['grr']:.4g}",
+                f"{results['pct_study_var']['part']:.4g}",
+                "100.0"
             ]
         })
         
@@ -815,10 +1035,15 @@ def main():
         print("GENERATING VISUALIZATIONS")
         print(f"{'='*70}")
         
-        plot_components_of_variation(results, f'{prefix}components_of_variation.png')
-        plot_algorithm_by_component(df, target_measurement, f'{prefix}algorithm_by_component.png')
-        plot_s_chart_by_operator(df, target_measurement, f'{prefix}s_chart_by_operator.png')
-        plot_algo_by_operator(df, target_measurement, f'{prefix}algo_by_operator.png')
+        if args.merge:
+            # Generate merged chart only
+            plot_merged_charts(df, results, target_measurement, f'{prefix}merged_analysis.png')
+        else:
+            # Generate individual charts
+            plot_components_of_variation(results, f'{prefix}components_of_variation.png')
+            plot_algorithm_by_component(df, target_measurement, f'{prefix}algorithm_by_component.png')
+            plot_s_chart_by_operator(df, target_measurement, f'{prefix}s_chart_by_operator.png')
+            plot_algo_by_operator(df, target_measurement, f'{prefix}algo_by_operator.png')
         
         # Save results to JSON
         results_dict = {
@@ -845,10 +1070,15 @@ def main():
         print("ANALYSIS COMPLETE")
         print(f"{'='*70}")
         print("\nOutput files generated:")
-        print(f"  - {prefix}components_of_variation.png")
-        print(f"  - {prefix}algorithm_by_component.png")
-        print(f"  - {prefix}s_chart_by_operator.png")
-        print(f"  - {prefix}algo_by_operator.png")
+        
+        if args.merge:
+            print(f"  - {prefix}merged_analysis.png")
+        else:
+            print(f"  - {prefix}components_of_variation.png")
+            print(f"  - {prefix}algorithm_by_component.png")
+            print(f"  - {prefix}s_chart_by_operator.png")
+            print(f"  - {prefix}algo_by_operator.png")
+        
         print(f"  - {prefix}anova_table.csv")
         print(f"  - {prefix}variance_components.csv")
         print(f"  - {prefix}grr_results.json")

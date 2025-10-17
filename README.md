@@ -56,6 +56,13 @@ python gage_rr_analysis.py -f /path/to/data.txt
 # Add output file prefix
 python gage_rr_analysis.py --algo Solder_ThicknessN1_Layer1 -o Layer1_
 
+# Merge all charts into a single image
+python gage_rr_analysis.py --algo Solder_Area_Layer2 -m
+
+# Parse and save cleaned data to CSV (no analysis)
+python gage_rr_analysis.py -p
+python gage_rr_analysis.py -p -o MyData_
+
 # Combine multiple options
 python gage_rr_analysis.py -f data.txt --algo Solder_Area_Layer2 --sv 5.15 --av 0.05 -o output_
 ```
@@ -65,11 +72,12 @@ python gage_rr_analysis.py -f data.txt --algo Solder_Area_Layer2 --sv 5.15 --av 
 | Argument | Alias | Default | Description |
 |----------|-------|---------|-------------|
 | `-f FILE` | `--file` | `EMI_20um_SV.txt` | Input data file path |
-| `-i FILE` | `--input` | | Input data file path (alias for -f) |
 | `--algo ALGO` | `--algorithm` | `Solder_ThicknessN1_Layer3` | Measurement column to analyze |
 | `--sv SV` | `--study-var` | `6.0` | Study variation multiplier (typically 5.15 or 6.0) |
 | `--av AV` | `--alpha` | `0.25` | Alpha value for confidence intervals |
 | `-o PREFIX` | `--output-prefix` | `` | Prefix for output files |
+| `-m` | `--merge` | | Merge all 4 charts into a single image |
+| `-p` | `--parse` | | Parse and save cleaned data to CSV file, then exit (no analysis) |
 | `--list` | | | List available measurement columns and exit |
 
 ### Basic Execution
@@ -90,11 +98,13 @@ The application generates the following files:
 - `algorithm_by_component.png` - Standard deviation by component
 - `s_chart_by_operator.png` - Statistical process control chart
 - `algo_by_operator.png` - Operator measurement distributions
+- `merged_analysis.png` - All 4 charts combined (when using `-m` flag)
 
 #### Data Files
 - `anova_table.csv` - ANOVA summary table (similar to HTML report format)
 - `variance_components.csv` - Detailed variance component breakdown
 - `grr_results.json` - Complete analysis results in JSON format
+- `parsed_data.csv` - Cleaned and formatted raw data (when using `-p` flag)
 
 ## Methodology
 

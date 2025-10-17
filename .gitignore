@@ -33,6 +33,7 @@ env/
 *_algorithm_by_component.png
 *_s_chart_by_operator.png
 *_algo_by_operator.png
+*_merged_analysis.png
 Test_*.png
 Layer*.png
 Area*.png
@@ -47,8 +48,10 @@ SV_*.png
 # CSV outputs - ignore all generated
 *anova_table.csv
 *variance_components.csv
+*parsed_data.csv
 anova_table.csv
 variance_components.csv
+parsed_data.csv
 
 # JSON outputs - ignore all generated
 *grr_results.json
@@ -137,3 +140,7 @@ MANIFEST
 
 *.~lock*
 /docs/*
+
+*.txt
+
+*.html
