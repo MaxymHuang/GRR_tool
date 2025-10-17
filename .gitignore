@@ -142,5 +142,7 @@ MANIFEST
 /docs/*
 
 *.txt
-
+*.png
 *.html
+*.json
+*.csv

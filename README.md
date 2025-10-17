@@ -27,7 +27,7 @@ uv pip install -r requirements.txt
 pip install -r requirements.txt
 ```
 
-## Usage
+## Usage (Type I ANOVA Script)
 
 ### Command Line Interface
 
@@ -67,7 +67,7 @@ python gage_rr_analysis.py -p -o MyData_
 python gage_rr_analysis.py -f data.txt --algo Solder_Area_Layer2 --sv 5.15 --av 0.05 -o output_
 ```
 
-### Command Line Arguments
+### Command Line Arguments (Type I ANOVA)
 
 | Argument | Alias | Default | Description |
 |----------|-------|---------|-------------|
@@ -105,6 +105,34 @@ The application generates the following files:
 - `variance_components.csv` - Detailed variance component breakdown
 - `grr_results.json` - Complete analysis results in JSON format
 - `parsed_data.csv` - Cleaned and formatted raw data (when using `-p` flag)
+
+## Usage (Type 1 Gage Study Script)
+
+### Command Line Interface
+
+```bash
+# List columns and components
+python gage_rr_type1.py --list -f EMI_20um_SV.txt
+
+# Default Type 1: tol=6σ, target=mean, first component
+python gage_rr_type1.py -f EMI_20um_SV.txt --algo Solder_ThicknessN1_Layer3 --component C100_1
+
+# Explicit tolerance and target, with output prefix and merged plot
+python gage_rr_type1.py -f EMI_20um_SV.txt --algo Solder_ThicknessN1_Layer3 --component C100_1 --tol 3.0 --target 40 -o T1_ -m
+
+# Parse-only (no analysis)
+python gage_rr_type1.py -p -f EMI_20um_SV.txt -o T1_
+```
+
+### Output Files (Type 1)
+
+- `type1_summary.csv` - One-row summary (n, mean, sd, 6σ, tol, LSL/USL, Cg/Cgk, bias, t/p, CI)
+- `type1_results.json` - Metrics as JSON
+- `distribution_vs_tolerance.png` - Histogram with normal fit and specs
+- `individuals_chart.png` - X chart with mean and ±3σ
+- `moving_range_chart.png` - MR chart (n=2) with MR̄ and UCL/LCL
+- `bias_plot.png` - Mean with CI vs target/specs
+- `type1_merged.png` - 2x2 combined figure (when `-m`)
 
 ## Methodology
 
