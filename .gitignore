@@ -1,0 +1,139 @@
+# Python
+*.py[cod]
+*$py.class
+*.so
+.Python
+__pycache__/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+.virtualenv/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyCharm
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Generated Analysis Outputs (keep examples, ignore user-generated)
+# PNG Charts - ignore prefixed outputs
+*_components_of_variation.png
+*_algorithm_by_component.png
+*_s_chart_by_operator.png
+*_algo_by_operator.png
+Test_*.png
+Layer*.png
+Area*.png
+SV_*.png
+
+# Exception: Keep example/reference charts (no prefix)
+!components_of_variation.png
+!algorithm_by_component.png
+!s_chart_by_operator.png
+!algo_by_operator.png
+
+# CSV outputs - ignore all generated
+*anova_table.csv
+*variance_components.csv
+anova_table.csv
+variance_components.csv
+
+# JSON outputs - ignore all generated
+*grr_results.json
+grr_results.json
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*.swo
+*~
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Data files (large)
+# Uncomment if you don't want to track data files
+# *.txt
+# *.csv
+# *.xlsx
+
+# Keep important text files
+!README.md
+!requirements.txt
+!*.md
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Editor backup files
+\#*\#
+.#*
+
+# Compressed files (optional)
+*.zip
+*.tar.gz
+*.tar.bz2
+*.rar
+*.7z
+
+# Test outputs
+test_output/
+temp/
+tmp/
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Profiling data
+*.prof
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Local configuration
+config.local.py
+settings.local.py
+
+# Documentation builds (if using Sphinx)
+docs/_build/
+site/
+
+# Distribution / packaging
+*.egg
+MANIFEST
+
+*.~lock*
+/docs/*
