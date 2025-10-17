@@ -882,8 +882,8 @@ Examples:
     
     parser.add_argument('--av', '--alpha',
                        type=float,
-                       default=0.25,
-                       help='Alpha value for confidence intervals (default: 0.25)')
+                       default=0.025,
+                       help='Alpha value for confidence intervals (default: 0.025)')
     
     parser.add_argument('--list',
                        action='store_true',

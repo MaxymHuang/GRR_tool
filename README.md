@@ -74,7 +74,7 @@ python gage_rr_analysis.py -f data.txt --algo Solder_Area_Layer2 --sv 5.15 --av 
 | `-f FILE` | `--file` | `EMI_20um_SV.txt` | Input data file path |
 | `--algo ALGO` | `--algorithm` | `Solder_ThicknessN1_Layer3` | Measurement column to analyze |
 | `--sv SV` | `--study-var` | `6.0` | Study variation multiplier (typically 5.15 or 6.0) |
-| `--av AV` | `--alpha` | `0.25` | Alpha value for confidence intervals |
+| `--av AV` | `--alpha` | `0.025` | Alpha value for confidence intervals |
 | `-o PREFIX` | `--output-prefix` | `` | Prefix for output files |
 | `-m` | `--merge` | | Merge all 4 charts into a single image |
 | `-p` | `--parse` | | Parse and save cleaned data to CSV file, then exit (no analysis) |
@@ -168,16 +168,6 @@ NDC = floor(1.41 × σ_part / σ_GR&R)
 - Board_Side
 - Any empty columns
 
-## Verification
-
-The script includes verification against reference HTML report values:
-
-For `Solder_ThicknessN1_Layer3`:
-- Expected Repeatability StdDev: 0.5208685
-- Expected %SV: 4.96%
-- Expected NDC: 28
-
-Results are displayed in the console output for comparison.
 
 ## Customization
 
@@ -186,7 +176,7 @@ Results are displayed in the console output for comparison.
 Use the `--algo` flag to specify which measurement to analyze:
 
 ```bash
-python gage_rr_analysis.py --algo Solder_Area_Layer1
+python gage_rr_analysis.py --algo {column name}
 ```
 
 To see all available measurements:
