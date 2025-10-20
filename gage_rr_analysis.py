@@ -901,6 +901,11 @@ Examples:
                        action='store_true',
                        help='Parse and save cleaned data to CSV file, then exit (no analysis)')
     
+    parser.add_argument('--exclude',
+                       nargs='*',
+                       default=[],
+                       help='Components (Comp_Name) to exclude; accept space or comma separated values')
+    
     return parser.parse_args()
 
 
@@ -915,6 +920,25 @@ def main():
     # Load and clean data
     print(f"\nInput file: {args.file}")
     df = load_and_clean_data(args.file)
+    
+    # Normalize and apply exclusions (by Comp_Name)
+    if args.exclude:
+        exclude_raw = []
+        for token in args.exclude:
+            exclude_raw.extend([t.strip() for t in str(token).split(',') if t.strip()])
+        exclude_set = set(exclude_raw)
+        if exclude_set:
+            before_rows = len(df)
+            df = df[~df['Comp_Name'].isin(exclude_set)].reset_index(drop=True)
+            after_rows = len(df)
+            print(f"\nExcluding components: {sorted(list(exclude_set))}")
+            print(f"Rows before: {before_rows}, after: {after_rows}")
+            # Recompute operator and part assignments to maintain sequencing
+            n_operators = 3
+            operators = ['A', 'B', 'C']
+            df['Operator'] = [operators[i % n_operators] for i in range(len(df))]
+            df['Part_ID'] = np.arange(len(df)) // n_operators
+            df['Part'] = 'Part_' + df['Part_ID'].astype(str)
     
     # If -p flag is set, save parsed data and exit
     if args.parse:

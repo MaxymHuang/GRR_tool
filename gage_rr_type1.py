@@ -132,11 +132,13 @@ def compute_type1_metrics(
 
     # Tolerance
     if tol is None:
-        tol = study_var  # Default to 6σ per requirement
+        # Default tolerance: 6 * sd * 1.33 (capability target) / 0.2
+        tol = 6.0 * sd * 1.33 / 0.2
 
     # Target
     if target is None:
-        target = mean_val
+        # Default reference is the dataset median (for the selected series)
+        target = float(np.median(values.values))
 
     # Specs
     lsl = target - tol / 2.0
@@ -270,7 +272,16 @@ def plot_individuals_chart(values: pd.Series, metrics: Dict, output_path: str):
     ax.set_ylabel('Measurement')
     ax.grid(axis='y', alpha=0.3)
     ax.legend()
-    plt.tight_layout()
+    # Footer with stats, bias and capability
+    footer = (
+        f"n={metrics['n']}  mean={format4(metrics['mean'])}  median(target)={format4(metrics['target'])}  sd={format4(metrics['sd'])}\n"
+        f"6σ={format4(metrics['study_var'])}  tol={format4(metrics['tol'])}  LSL={format4(metrics['lsl'])}  USL={format4(metrics['usl'])}\n"
+        f"Cg={format4(metrics['cg'])}  Cgk={format4(metrics['cgk'])}  bias={format4(metrics['bias'])}  bias%tol={format4(metrics['bias_pct_tol'])}%\n"
+        f"t={format4(metrics['t'])}  p={format4(metrics['p'])}  CI=[{format4(metrics['ci_low'])}, {format4(metrics['ci_high'])}]"
+    )
+    ax.text(0.5, -0.22, footer, transform=ax.transAxes, ha='center', va='top', fontsize=9,
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+    plt.tight_layout(rect=[0, 0.13, 1, 1])
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"Saved: {output_path}")
@@ -306,29 +317,7 @@ def plot_moving_range_chart(values: pd.Series, output_path: str):
     print(f"Saved: {output_path}")
 
 
-def plot_bias_chart(metrics: Dict, output_path: str):
-    mean_val = metrics['mean']
-    ci_low = metrics['ci_low']
-    ci_high = metrics['ci_high']
-    target = metrics['target']
-    lsl = metrics['lsl']
-    usl = metrics['usl']
-
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.errorbar([0], [mean_val], yerr=[[mean_val - ci_low], [ci_high - mean_val]], fmt='o', color='#1f77b4', capsize=6, label='Mean ± CI')
-    ax.axhline(target, color='green', linewidth=2, label=f'Target={format4(target)}')
-    ax.axhline(lsl, color='red', linestyle='--', linewidth=2, label=f'LSL={format4(lsl)}')
-    ax.axhline(usl, color='red', linestyle='--', linewidth=2, label=f'USL={format4(usl)}')
-    ax.set_xlim(-1, 1)
-    ax.set_xticks([])
-    ax.set_title('Bias vs Target (with CI)', fontsize=14, fontweight='bold')
-    ax.set_ylabel('Measurement')
-    ax.grid(axis='y', alpha=0.3)
-    ax.legend(loc='best')
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    print(f"Saved: {output_path}")
+# Removed bias plot output per requirements
 
 
 def plot_merged(values: pd.Series, metrics: Dict, measurement: str, output_path: str):
@@ -382,16 +371,21 @@ def plot_merged(values: pd.Series, metrics: Dict, measurement: str, output_path:
     ax3.set_title('Moving Range Chart (n=2)', fontsize=12, fontweight='bold')
     ax3.grid(axis='y', alpha=0.3)
 
-    # Bias (bottom-right)
+    # Capability summary (bottom-right)
     ax4 = fig.add_subplot(gs[1, 1])
-    ax4.errorbar([0], [mean_val], yerr=[[mean_val - metrics['ci_low']], [metrics['ci_high'] - mean_val]], fmt='o', color='#1f77b4', capsize=6)
-    ax4.axhline(target, color='green', linewidth=2)
-    ax4.axhline(metrics['lsl'], color='red', linestyle='--', linewidth=2)
-    ax4.axhline(metrics['usl'], color='red', linestyle='--', linewidth=2)
-    ax4.set_xlim(-1, 1)
-    ax4.set_xticks([])
-    ax4.set_title('Bias vs Target (with CI)', fontsize=12, fontweight='bold')
-    ax4.grid(axis='y', alpha=0.3)
+    ax4.axis('off')
+    summary = (
+        f"n={metrics['n']}\n"
+        f"mean={format4(metrics['mean'])}  median(target)={format4(metrics['target'])}  sd={format4(metrics['sd'])}\n"
+        f"6σ={format4(metrics['study_var'])}  tol={format4(metrics['tol'])}\n"
+        f"LSL={format4(metrics['lsl'])}  USL={format4(metrics['usl'])}\n"
+        f"Cg={format4(metrics['cg'])}  Cgk={format4(metrics['cgk'])}\n"
+        f"bias={format4(metrics['bias'])}  bias%tol={format4(metrics['bias_pct_tol'])}%\n"
+        f"t={format4(metrics['t'])}  p={format4(metrics['p'])}\n"
+        f"CI=[{format4(metrics['ci_low'])}, {format4(metrics['ci_high'])}]"
+    )
+    ax4.text(0.5, 0.5, summary, ha='center', va='center', fontsize=11,
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
 
     fig.suptitle(f'Type 1 Gage Study - {measurement}', fontsize=14, fontweight='bold', y=0.995)
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -450,6 +444,9 @@ Examples:
     parser.add_argument('--list', action='store_true',
                         help='List available measurement columns and components and exit')
 
+    parser.add_argument('--display-comp', action='store_true',
+                        help='Preview components in a 1x60 table (up to 60 names) and exit')
+
     parser.add_argument('-o', '--output-prefix', default='',
                         help='Prefix for output files (default: none)')
 
@@ -458,6 +455,12 @@ Examples:
 
     parser.add_argument('-p', '--parse', action='store_true',
                         help='Parse and save cleaned data to CSV file, then exit (no analysis)')
+
+    parser.add_argument('--exclude', nargs='*', default=[],
+                        help='Components (Comp_Name) to exclude; accept space or comma separated values')
+
+    parser.add_argument('--include', nargs='*', default=[],
+                        help='Components (Comp_Name) to include; accept space or comma separated values')
 
     return parser.parse_args()
 
@@ -471,6 +474,32 @@ def main():
 
     print(f"\nInput file: {args.file}")
     df = load_and_clean_data(args.file)
+
+    # Apply exclusions (by Comp_Name) if provided
+    if args.exclude:
+        exclude_raw = []
+        for token in args.exclude:
+            exclude_raw.extend([t.strip() for t in str(token).split(',') if t.strip()])
+        exclude_set = set(exclude_raw)
+        if exclude_set:
+            before = len(df)
+            df = df[~df['Comp_Name'].isin(exclude_set)].reset_index(drop=True)
+            after = len(df)
+            print(f"\nExcluding components: {sorted(list(exclude_set))}")
+            print(f"Rows before: {before}, after: {after}")
+
+    # Apply includes (by Comp_Name) if provided
+    if args.include:
+        include_raw = []
+        for token in args.include:
+            include_raw.extend([t.strip() for t in str(token).split(',') if t.strip()])
+        include_set = set(include_raw)
+        if include_set:
+            before = len(df)
+            df = df[df['Comp_Name'].isin(include_set)].reset_index(drop=True)
+            after = len(df)
+            print(f"\nIncluding only components: {sorted(list(include_set))}")
+            print(f"Rows before: {before}, after: {after}")
 
     # Parse-only mode
     if args.parse:
@@ -490,6 +519,16 @@ def main():
     measurement_cols = [c for c in df.columns if c not in ['Comp_Name', 'Component'] and df[c].dtype in ['float64', 'int64']]
     components = sorted(df['Comp_Name'].unique().tolist())
 
+    # Components preview (1x60 table)
+    if args.display_comp:
+        preview = components[:60]
+        print("\nComponents (up to 60):")
+        if not preview:
+            print("  (none)")
+        else:
+            print("  " + " | ".join(preview))
+        return
+
     if args.list:
         print("\nAvailable measurement columns:")
         for i, col in enumerate(measurement_cols, 1):
@@ -508,10 +547,23 @@ def main():
             print(f"  - {col}")
         return
 
-    component = args.component or (components[0] if components else None)
-    if component is None:
-        print("\n❌ Error: No components found in data.")
-        return
+    # Require explicit component unless a single include is provided
+    component = args.component
+    if not component:
+        # If include selects exactly one, use it
+        include_raw = []
+        if args.include:
+            for token in args.include:
+                include_raw.extend([t.strip() for t in str(token).split(',') if t.strip()])
+        include_set = sorted(list(set(include_raw)))
+        if len(include_set) == 1:
+            component = include_set[0]
+        else:
+            if not components:
+                print("\n❌ Error: No components found in data.")
+                return
+            print("\n❌ Error: Please specify --component to run a Type 1 study (or provide a single component via --include). Use --display-comp to preview.")
+            return
 
     print(f"\nSelection:")
     print(f"  - Measurement: {measurement}")
@@ -554,7 +606,6 @@ def main():
         plot_distribution_vs_tolerance(values, metrics, f"{prefix}distribution_vs_tolerance.png")
         plot_individuals_chart(values, metrics, f"{prefix}individuals_chart.png")
         plot_moving_range_chart(values, f"{prefix}moving_range_chart.png")
-        plot_bias_chart(metrics, f"{prefix}bias_plot.png")
 
     print(f"\n{'='*70}")
     print("TYPE 1 STUDY COMPLETE")

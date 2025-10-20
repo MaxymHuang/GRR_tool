@@ -63,6 +63,10 @@ python gage_rr_analysis.py --algo Solder_Area_Layer2 -m
 python gage_rr_analysis.py -p
 python gage_rr_analysis.py -p -o MyData_
 
+# Exclude specific components by Comp_Name (space or comma separated)
+python gage_rr_analysis.py --exclude C100_1 C100_2 --algo Solder_ThicknessN1_Layer3
+python gage_rr_analysis.py --exclude C100_1,C100_2 --algo Solder_ThicknessN1_Layer3
+
 # Combine multiple options
 python gage_rr_analysis.py -f data.txt --algo Solder_Area_Layer2 --sv 5.15 --av 0.05 -o output_
 ```
@@ -122,6 +126,10 @@ python gage_rr_type1.py -f EMI_20um_SV.txt --algo Solder_ThicknessN1_Layer3 --co
 
 # Parse-only (no analysis)
 python gage_rr_type1.py -p -f EMI_20um_SV.txt -o T1_
+
+# Exclude components in Type 1
+python gage_rr_type1.py --list --exclude C100_1 C100_2
+python gage_rr_type1.py --algo Solder_ThicknessN1_Layer3 --component C101_1 --exclude C100_1,C100_2
 ```
 
 ### Output Files (Type 1)
