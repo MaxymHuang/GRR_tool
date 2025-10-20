@@ -118,7 +118,8 @@ The application generates the following files:
 # List columns and components
 python gage_rr_type1.py --list -f EMI_20um_SV.txt
 
-# Default Type 1: tol=6σ, target=mean, first component
+# Preview components (1x60 row), then pick one with --component
+python gage_rr_type1.py --display-comp
 python gage_rr_type1.py -f EMI_20um_SV.txt --algo Solder_ThicknessN1_Layer3 --component C100_1
 
 # Explicit tolerance and target, with output prefix and merged plot
@@ -127,9 +128,12 @@ python gage_rr_type1.py -f EMI_20um_SV.txt --algo Solder_ThicknessN1_Layer3 --co
 # Parse-only (no analysis)
 python gage_rr_type1.py -p -f EMI_20um_SV.txt -o T1_
 
-# Exclude components in Type 1
+# Include / Exclude components in Type 1
 python gage_rr_type1.py --list --exclude C100_1 C100_2
 python gage_rr_type1.py --algo Solder_ThicknessN1_Layer3 --component C101_1 --exclude C100_1,C100_2
+
+# Auto-select single component via --include (no --component needed)
+python gage_rr_type1.py --include C100_1 --algo Solder_ThicknessN1_Layer3
 ```
 
 ### Output Files (Type 1)
@@ -137,10 +141,17 @@ python gage_rr_type1.py --algo Solder_ThicknessN1_Layer3 --component C101_1 --ex
 - `type1_summary.csv` - One-row summary (n, mean, sd, 6σ, tol, LSL/USL, Cg/Cgk, bias, t/p, CI)
 - `type1_results.json` - Metrics as JSON
 - `distribution_vs_tolerance.png` - Histogram with normal fit and specs
-- `individuals_chart.png` - X chart with mean and ±3σ
+- `individuals_chart.png` - X chart with mean, ±3σ, and a footer showing stats/bias/capability
 - `moving_range_chart.png` - MR chart (n=2) with MR̄ and UCL/LCL
-- `bias_plot.png` - Mean with CI vs target/specs
-- `type1_merged.png` - 2x2 combined figure (when `-m`)
+- `type1_merged.png` - 2x2 combined figure (when `-m`), bottom-right shows capability summary panel
+
+### Defaults and flags (Type 1)
+
+- Default target: dataset median for the selected component
+- Default tolerance: 6 × sd × 1.33 / 0.2
+- `--component` is required unless a single component is provided via `--include`
+- `--display-comp`: prints up to 60 component names in one row and exits
+- `--include`/`--exclude`: filter by `Comp_Name` (space- or comma-separated lists), applied before selection
 
 ## Methodology
 
