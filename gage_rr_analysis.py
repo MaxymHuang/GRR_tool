@@ -353,6 +353,26 @@ def create_anova_table(results: Dict) -> pd.DataFrame:
     return df
 
 
+def remove_outliers_iqr(df: pd.DataFrame, measurement_col: str) -> Tuple[pd.DataFrame, int]:
+    """
+    Remove outliers from df for the given measurement column using the IQR rule (1.5*IQR).
+    Returns the filtered DataFrame and the number of rows removed.
+    """
+    if measurement_col not in df.columns:
+        return df, 0
+    series = df[measurement_col].astype(float)
+    q1 = series.quantile(0.25)
+    q3 = series.quantile(0.75)
+    iqr = q3 - q1
+    if pd.isna(iqr) or iqr == 0:
+        return df, 0
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
+    mask = series.between(lower, upper, inclusive='both')
+    removed = int((~mask).sum())
+    return df[mask].reset_index(drop=True), removed
+
+
 def plot_components_of_variation(results: Dict, output_path: str):
     """
     Generate Components of Variation bar chart.
@@ -905,6 +925,19 @@ Examples:
                        nargs='*',
                        default=[],
                        help='Components (Comp_Name) to exclude; accept space or comma separated values')
+
+    parser.add_argument('--display-comp',
+                       action='store_true',
+                       help='Preview components (Comp_Name) in a 1x60 row and exit')
+
+    parser.add_argument('--include',
+                       nargs='*',
+                       default=[],
+                       help='Components (Comp_Name) to include; accept space or comma separated values')
+
+    parser.add_argument('--rm', '--remove-outliers',
+                       action='store_true',
+                       help='Remove outliers using IQR (1.5*IQR) for the selected measurement before analysis')
     
     return parser.parse_args()
 
@@ -939,6 +972,36 @@ def main():
             df['Operator'] = [operators[i % n_operators] for i in range(len(df))]
             df['Part_ID'] = np.arange(len(df)) // n_operators
             df['Part'] = 'Part_' + df['Part_ID'].astype(str)
+
+    # Normalize and apply inclusions (by Comp_Name)
+    if args.include:
+        include_raw = []
+        for token in args.include:
+            include_raw.extend([t.strip() for t in str(token).split(',') if t.strip()])
+        include_set = set(include_raw)
+        if include_set:
+            before_rows = len(df)
+            df = df[df['Comp_Name'].isin(include_set)].reset_index(drop=True)
+            after_rows = len(df)
+            print(f"\nIncluding only components: {sorted(list(include_set))}")
+            print(f"Rows before: {before_rows}, after: {after_rows}")
+            # Recompute operator and part assignments to maintain sequencing
+            n_operators = 3
+            operators = ['A', 'B', 'C']
+            df['Operator'] = [operators[i % n_operators] for i in range(len(df))]
+            df['Part_ID'] = np.arange(len(df)) // n_operators
+            df['Part'] = 'Part_' + df['Part_ID'].astype(str)
+
+    # Preview components and exit if requested
+    if args.display_comp:
+        comps = sorted(df['Comp_Name'].dropna().astype(str).unique().tolist())
+        preview = comps[:60]
+        print("\nComponents (up to 60):")
+        if preview:
+            print("  " + " | ".join(preview))
+        else:
+            print("  (none)")
+        return
     
     # If -p flag is set, save parsed data and exit
     if args.parse:
@@ -988,6 +1051,13 @@ def main():
     print(f"  - Alpha Value: {args.av}")
     print(f"  - Output Prefix: '{args.output_prefix}'")
     
+    # Optional outlier removal on the selected measurement
+    if args.rm:
+        before = len(df)
+        df, removed = remove_outliers_iqr(df, target_measurement)
+        after = len(df)
+        print(f"\nOutlier removal (IQR) for {target_measurement}: removed {removed} rows (from {before} to {after})")
+
     # Perform Gage R&R analysis
     results = perform_anova_grr(df, target_measurement, study_var=args.sv)
     

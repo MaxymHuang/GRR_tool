@@ -252,7 +252,10 @@ python gage_rr_analysis.py --sv 5.15
 
 ## License
 
-This application is provided as-is for quality control and measurement system analysis purposes.
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0).
+
+- See the `LICENSE` file for the full text.
+- This project depends on third-party libraries (e.g., PySide6 under LGPL) which are compatible with GPL-3.0; their respective licenses apply to those components.
 
 ## References
 

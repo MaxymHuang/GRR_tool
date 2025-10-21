@@ -34,46 +34,54 @@ warnings.filterwarnings('ignore')
 
 def load_and_clean_data(file_path: str) -> pd.DataFrame:
     """
-    Load and clean the measurement data file (tab-separated) while preserving
-    the data structure. Unlike the Type I ANOVA script, this loader does NOT
-    assign operators or parts; it only cleans and standardizes the table.
+    Load and clean the measurement data file.
+    - If file is .csv: use pandas.read_csv directly.
+    - Else: parse custom tab-separated multi-section format.
+    The loader only cleans and standardizes the table.
     """
     print(f"Loading data from {file_path}...")
 
-    with open(file_path, 'r') as f:
-        lines = f.readlines()
+    lower_path = str(file_path).lower()
+    if lower_path.endswith('.csv'):
+        # Robust CSV read for parsed datasets
+        df = pd.read_csv(file_path, engine='python')
+        print(f"Found 0 header lines at positions: []")
+        print(f"Initial data shape: {df.shape}")
+    else:
+        with open(file_path, 'r') as f:
+            lines = f.readlines()
 
-    # Identify header lines that begin sections
-    header_lines = []
-    for i, line in enumerate(lines):
-        if line.startswith('Comp_Name\t'):
-            header_lines.append(i)
+        # Identify header lines that begin sections
+        header_lines = []
+        for i, line in enumerate(lines):
+            if line.startswith('Comp_Name\t'):
+                header_lines.append(i)
 
-    print(f"Found {len(header_lines)} header lines at positions: {header_lines}")
+        print(f"Found {len(header_lines)} header lines at positions: {header_lines}")
 
-    all_data_rows = []
-    first_header = None
+        all_data_rows = []
+        first_header = None
 
-    for section_idx in range(len(header_lines)):
-        start_line = header_lines[section_idx]
-        end_line = header_lines[section_idx + 1] if section_idx + 1 < len(header_lines) else len(lines)
+        for section_idx in range(len(header_lines)):
+            start_line = header_lines[section_idx]
+            end_line = header_lines[section_idx + 1] if section_idx + 1 < len(header_lines) else len(lines)
 
-        header = lines[start_line].strip().split('\t')
-        if first_header is None:
-            first_header = header
+            header = lines[start_line].strip().split('\t')
+            if first_header is None:
+                first_header = header
 
-        section_lines = lines[start_line + 1:end_line]
-        for line in section_lines:
-            if line.strip():
-                parts = line.strip().split('\t')
-                if len(parts) > 0 and parts[0] and parts[0] != 'Comp_Name':
-                    row_dict = {}
-                    for i, col in enumerate(header):
-                        row_dict[col] = parts[i] if i < len(parts) else ''
-                    all_data_rows.append(row_dict)
+            section_lines = lines[start_line + 1:end_line]
+            for line in section_lines:
+                if line.strip():
+                    parts = line.strip().split('\t')
+                    if len(parts) > 0 and parts[0] and parts[0] != 'Comp_Name':
+                        row_dict = {}
+                        for i, col in enumerate(header):
+                            row_dict[col] = parts[i] if i < len(parts) else ''
+                        all_data_rows.append(row_dict)
 
-    df = pd.DataFrame(all_data_rows)
-    print(f"Initial data shape: {df.shape}")
+        df = pd.DataFrame(all_data_rows)
+        print(f"Initial data shape: {df.shape}")
 
     # Remove specified columns if present
     columns_to_remove = [
@@ -97,16 +105,43 @@ def load_and_clean_data(file_path: str) -> pd.DataFrame:
     if numeric_cols:
         df = df.dropna(subset=numeric_cols, how='all')
 
-    # Keep valid Comp_Name
-    df = df[df['Comp_Name'].notna() & (df['Comp_Name'] != '')]
+    # For CSVs produced by our parser, Comp_Name should exist; if not, try fallbacks
+    if 'Comp_Name' not in df.columns:
+        # Try common alternative naming
+        candidate_cols = [c for c in df.columns if c.lower() in ['comp_name', 'component']]
+        if candidate_cols:
+            df['Comp_Name'] = df[candidate_cols[0]]
 
-    # Keep original component name for convenience
-    df['Component'] = df['Comp_Name']
+    # Keep valid Comp_Name if present
+    if 'Comp_Name' in df.columns:
+        df = df[df['Comp_Name'].notna() & (df['Comp_Name'] != '')]
+        # Keep original component name for convenience
+        df['Component'] = df['Comp_Name']
 
     print(f"Cleaned data shape: {df.shape}")
     print(f"Columns retained: {list(df.columns)}")
 
     return df
+
+
+def remove_outliers_iqr_series(values: pd.Series) -> Tuple[pd.Series, int]:
+    """
+    Remove outliers from a numeric series using IQR (1.5*IQR) rule.
+    Returns the filtered series and the number of removed points.
+    """
+    series = values.dropna().astype(float)
+    if series.empty:
+        return series, 0
+    q1 = series.quantile(0.25)
+    q3 = series.quantile(0.75)
+    iqr = q3 - q1
+    if pd.isna(iqr) or iqr == 0:
+        return series, 0
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
+    mask = series.between(lower, upper, inclusive='both')
+    removed = int((~mask).sum())
+    return series[mask], removed
 
 
 def compute_type1_metrics(
@@ -462,6 +497,12 @@ Examples:
     parser.add_argument('--include', nargs='*', default=[],
                         help='Components (Comp_Name) to include; accept space or comma separated values')
 
+    parser.add_argument('--limit', type=int, default=30,
+                        help='Limit number of readings used for Type 1 (default: 30). Use <=0 for all.')
+
+    parser.add_argument('--rm', '--remove-outliers', action='store_true',
+                        help='Remove outliers using IQR (1.5*IQR) for the selected series before analysis')
+
     return parser.parse_args()
 
 
@@ -515,8 +556,12 @@ def main():
         return
 
     # List mode
-    # Identify measurement and components
-    measurement_cols = [c for c in df.columns if c not in ['Comp_Name', 'Component'] and df[c].dtype in ['float64', 'int64']]
+    # Identify measurement and components (numeric dtypes only)
+    numeric_kinds = set(['i', 'u', 'f'])  # int, unsigned, float
+    measurement_cols = [
+        c for c in df.columns
+        if c not in ['Comp_Name', 'Component'] and hasattr(df[c].dtype, 'kind') and df[c].dtype.kind in numeric_kinds
+    ]
     components = sorted(df['Comp_Name'].unique().tolist())
 
     # Components preview (1x60 table)
@@ -538,14 +583,20 @@ def main():
             print(f"  {i:2d}. {comp}")
         return
 
-    # Validate selection
-    measurement = args.algo
-    if measurement not in measurement_cols:
-        print(f"\n❌ Error: '{measurement}' not found in data!")
+    # Validate selection (case-insensitive and tolerant to separators)
+    def normalize_key(s: str) -> str:
+        return ''.join(ch for ch in s.lower() if ch.isalnum())
+
+    requested = args.algo
+    normalized_map = {normalize_key(c): c for c in measurement_cols}
+    resolved = normalized_map.get(normalize_key(requested))
+    if not resolved:
+        print(f"\n❌ Error: '{requested}' not found in data!")
         print("\nAvailable columns:")
         for col in measurement_cols:
             print(f"  - {col}")
         return
+    measurement = resolved
 
     # Require explicit component unless a single include is provided
     component = args.component
@@ -577,6 +628,14 @@ def main():
         subset = subset[subset['Operator'] == args.operator]
 
     values = subset[measurement].dropna()
+    # Apply limit if requested
+    if args.limit and args.limit > 0:
+        values = values.iloc[:args.limit]
+    # Optional outlier removal
+    if args.rm:
+        before_n = len(values)
+        values, removed = remove_outliers_iqr_series(values)
+        print(f"Outlier removal (IQR): removed {removed} (from {before_n} to {len(values)})")
     if len(values) < 2:
         print("\n❌ Error: Need at least 2 readings for the selected component/operator.")
         return
