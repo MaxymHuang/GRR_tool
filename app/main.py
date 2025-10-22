@@ -451,6 +451,181 @@ class Type1Tab(QWidget):
         QMessageBox.information(self, "Saved", f"Saved {copied} chart(s) to {out_dir}.")
 
 
+class ParseTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.df_base = None
+        self.df_preview = None
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout()
+
+        controls = QGridLayout()
+
+        # File and prefix
+        self.file_edit = QLineEdit()
+        browse_btn = QPushButton("Browse")
+        browse_btn.clicked.connect(self._browse)
+        self.prefix_edit = QLineEdit()
+
+        # Component include/exclude and column drop
+        self.include_edit = QLineEdit(); self.include_edit.setPlaceholderText("Include components (space/comma)")
+        self.exclude_edit = QLineEdit(); self.exclude_edit.setPlaceholderText("Exclude components (space/comma)")
+        self.dropcols_edit = QLineEdit(); self.dropcols_edit.setPlaceholderText("Drop columns (space/comma)")
+
+        # Measurement for outlier preview
+        self.algo_combo = QComboBox()
+
+        # Actions
+        load_btn = QPushButton("Load File")
+        load_btn.clicked.connect(self._load_file)
+        disp_comp_btn = QPushButton("Display Components")
+        disp_comp_btn.clicked.connect(self._display_components)
+        preview_btn = QPushButton("Preview")
+        preview_btn.clicked.connect(self._preview)
+        preview_iqr_btn = QPushButton("Preview with IQR")
+        preview_iqr_btn.clicked.connect(self._preview_with_iqr)
+        save_btn = QPushButton("Save CSV…")
+        save_btn.clicked.connect(self._save_csv)
+
+        r = 0
+        controls.addWidget(QLabel("File"), r, 0); controls.addWidget(self.file_edit, r, 1); controls.addWidget(browse_btn, r, 2); r += 1
+        controls.addWidget(QLabel("Output Prefix"), r, 0); controls.addWidget(self.prefix_edit, r, 1); r += 1
+        controls.addWidget(QLabel("Include"), r, 0); controls.addWidget(self.include_edit, r, 1); r += 1
+        controls.addWidget(QLabel("Exclude"), r, 0); controls.addWidget(self.exclude_edit, r, 1); r += 1
+        controls.addWidget(QLabel("Drop Cols"), r, 0); controls.addWidget(self.dropcols_edit, r, 1); r += 1
+        controls.addWidget(QLabel("Measurement"), r, 0); controls.addWidget(self.algo_combo, r, 1); r += 1
+        controls.addWidget(load_btn, r, 0); controls.addWidget(preview_btn, r, 1); controls.addWidget(save_btn, r, 2); r += 1
+        controls.addWidget(preview_iqr_btn, r, 1); controls.addWidget(disp_comp_btn, r, 2); r += 1
+
+        layout.addLayout(controls)
+
+        # Components preview area
+        self.comp_text = QTextEdit()
+        self.comp_text.setReadOnly(True)
+        self.comp_text.setMaximumHeight(90)
+        layout.addWidget(self.comp_text)
+
+        # Status line
+        self.status_lbl = QLabel("")
+        layout.addWidget(self.status_lbl)
+
+        # Table preview
+        self.table = TablePanel()
+        layout.addWidget(self.table)
+
+        self.setLayout(layout)
+
+    def _browse(self):
+        path = select_file(self, "Select Input File")
+        if path:
+            self.file_edit.setText(path)
+
+    def _load_file(self):
+        try:
+            path = self.file_edit.text().strip()
+            if not path:
+                raise ValueError("No file selected")
+            # Reuse type1 loader (supports .txt and .csv)
+            df = load_type1_data(path)
+            self.df_base = df.reset_index(drop=True)
+            # Populate measurement list (numeric columns except component labels)
+            numeric_kinds = set(['i', 'u', 'f'])
+            meas_cols = [
+                c for c in self.df_base.columns
+                if c not in ['Comp_Name', 'Component', 'Operator', 'Part', 'Part_ID', 'Measurement_Order']
+                and hasattr(self.df_base[c].dtype, 'kind') and self.df_base[c].dtype.kind in numeric_kinds
+            ]
+            self.algo_combo.clear(); self.algo_combo.addItems(meas_cols)
+            self._set_status(f"Loaded: {len(self.df_base)} rows, {len(self.df_base.columns)} cols; {len(meas_cols)} numeric measurements")
+            # Initial preview without filters
+            self.df_preview = self.df_base.copy()
+            self._render(self.df_preview)
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", str(e))
+
+    def _display_components(self):
+        if self.df_base is None or 'Comp_Name' not in self.df_base.columns:
+            self.comp_text.setPlainText("(No components to display)")
+            return
+        comps = sorted(self.df_base['Comp_Name'].dropna().astype(str).unique().tolist())
+        preview = comps[:60]
+        self.comp_text.setPlainText(" | ".join(preview) if preview else "(none)")
+
+    def _apply_filters(self, base_df):
+        df = base_df.copy()
+        # Include/Exclude components
+        inc = set(to_list_from_tokens(self.include_edit.text().split()))
+        exc = set(to_list_from_tokens(self.exclude_edit.text().split()))
+        if 'Comp_Name' in df.columns:
+            if inc:
+                df = df[df['Comp_Name'].isin(inc)].reset_index(drop=True)
+            if exc:
+                df = df[~df['Comp_Name'].isin(exc)].reset_index(drop=True)
+        # Drop columns
+        drop_raw = set(to_list_from_tokens(self.dropcols_edit.text().split()))
+        drop_cols = [c for c in df.columns if c in drop_raw]
+        if drop_cols:
+            df = df.drop(columns=drop_cols)
+        return df
+
+    def _preview(self):
+        try:
+            if self.df_base is None:
+                raise ValueError("Load a file first")
+            df = self._apply_filters(self.df_base)
+            if df.empty:
+                raise ValueError("No data after filters")
+            self.df_preview = df
+            self._render(self.df_preview)
+            self._set_status(f"Preview: {len(df)} rows × {len(df.columns)} cols")
+        except Exception as e:
+            QMessageBox.critical(self, "Preview Error", str(e))
+
+    def _preview_with_iqr(self):
+        try:
+            if self.df_base is None:
+                raise ValueError("Load a file first")
+            meas = self.algo_combo.currentText()
+            if not meas:
+                raise ValueError("Select a measurement column for outlier preview")
+            df = self._apply_filters(self.df_base)
+            if meas not in df.columns:
+                raise ValueError(f"Column not in preview: {meas}")
+            from gage_rr_analysis import remove_outliers_iqr
+            before = len(df)
+            df2, removed = remove_outliers_iqr(df, meas)
+            self.df_preview = df2
+            self._render(self.df_preview)
+            self._set_status(f"IQR preview on {meas}: removed {removed} (from {before} to {len(df2)})")
+        except Exception as e:
+            QMessageBox.critical(self, "IQR Preview Error", str(e))
+
+    def _save_csv(self):
+        try:
+            if self.df_preview is None or self.df_preview.empty:
+                raise ValueError("Nothing to save. Run Preview first.")
+            suggested = (self.prefix_edit.text().strip() or "") + "parsed_data.csv"
+            dst, _ = QFileDialog.getSaveFileName(self, "Save CSV As", suggested, "CSV Files (*.csv);;All Files (*)")
+            if not dst:
+                return
+            self.df_preview.to_csv(dst, index=False)
+            # Re-read to confirm and render
+            import pandas as pd
+            df_check = pd.read_csv(dst)
+            self._render(df_check)
+            self._set_status(f"Saved: {dst} | {len(df_check)} rows × {len(df_check.columns)} cols")
+            QMessageBox.information(self, "Saved", f"Saved CSV to: {dst}")
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", str(e))
+
+    def _render(self, df):
+        self.table.load_dataframe(df)
+
+    def _set_status(self, msg: str):
+        self.status_lbl.setText(msg)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -459,6 +634,7 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.addTab(AnovaTab(), "ANOVA (Type I)")
         tabs.addTab(Type1Tab(), "Type 1 Gage")
+        tabs.addTab(ParseTab(), "Parsing")
         self.setCentralWidget(tabs)
 
 
