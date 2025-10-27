@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QFileDialog, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
     QTextEdit, QGridLayout, QGroupBox, QCheckBox, QTableWidget, QTableWidgetItem,
-    QMessageBox, QScrollArea
+    QMessageBox, QScrollArea, QListWidget, QListWidgetItem, QSplitter, QDialog,
+    QDialogButtonBox
 )
 from PySide6.QtGui import QPixmap
 
@@ -20,10 +21,19 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from gage_rr_analysis import load_and_clean_data as load_anova_data, perform_anova_grr, create_anova_table
+from data_parser import (
+    load_and_clean_data,
+    apply_component_filters,
+    remove_outliers_iqr,
+    remove_outliers_iqr_series,
+    get_measurement_columns,
+    get_components_preview
+)
+
+from gage_rr_analysis import perform_anova_grr, create_anova_table
 from gage_rr_analysis import plot_components_of_variation, plot_algorithm_by_component, plot_s_chart_by_operator, plot_algo_by_operator, plot_merged_charts
 
-from gage_rr_type1 import load_and_clean_data as load_type1_data, compute_type1_metrics, create_type1_summary_df
+from gage_rr_type1 import compute_type1_metrics, create_type1_summary_df
 from gage_rr_type1 import plot_distribution_vs_tolerance, plot_individuals_chart, plot_moving_range_chart, plot_merged
 
 
@@ -194,13 +204,13 @@ class AnovaTab(QWidget):
             path = self.file_edit.text().strip()
             if not path:
                 raise ValueError("No file selected")
-            df = load_anova_data(path)
+            df = load_and_clean_data(path)
             # apply exclude
             excl = to_list_from_tokens(self.exclude_edit.text().split())
             if excl:
-                df = df[~df['Comp_Name'].isin(set(excl))].reset_index(drop=True)
+                df = apply_component_filters(df, exclude=excl)
             # Identify measurement columns
-            measurement_cols = [c for c in df.columns if c not in ['Comp_Name','Operator','Part','Component','Part_ID','Measurement_Order'] and str(df[c].dtype) in ['float64','int64']]
+            measurement_cols = get_measurement_columns(df)
             self.df = df
             self.algo_combo.clear()
             self.algo_combo.addItems(measurement_cols)
@@ -221,7 +231,6 @@ class AnovaTab(QWidget):
             # Optionally remove outliers for the chosen measurement
             run_df = self.df
             if remove_outliers:
-                from gage_rr_analysis import remove_outliers_iqr
                 before = len(run_df)
                 run_df, removed = remove_outliers_iqr(run_df, algo)
                 QMessageBox.information(self, "Outlier Removal", f"Removed {removed} rows (from {before} to {len(run_df)}).")
@@ -292,7 +301,7 @@ class Type1Tab(QWidget):
 
         self.algo_combo = QComboBox()
         self.comp_combo = QComboBox()
-        self.limit_spin = QSpinBox(); self.limit_spin.setRange(0, 100000); self.limit_spin.setValue(30)
+        self.n_spin = QSpinBox(); self.n_spin.setRange(0, 100000); self.n_spin.setValue(30)
         self.sv_spin = QDoubleSpinBox(); self.sv_spin.setRange(0.001, 9999); self.sv_spin.setValue(6.0)
         self.av_spin = QDoubleSpinBox(); self.av_spin.setRange(0.0001, 1.0); self.av_spin.setSingleStep(0.005); self.av_spin.setValue(0.25)
         self.tol_spin = QDoubleSpinBox(); self.tol_spin.setRange(0.0, 1e9); self.tol_spin.setDecimals(6); self.tol_spin.setSingleStep(0.1); self.tol_spin.setValue(0.0); self.tol_spin.setSpecialValueText("Auto")
@@ -313,7 +322,7 @@ class Type1Tab(QWidget):
         controls.addWidget(QLabel("File"), r, 0); controls.addWidget(self.file_edit, r, 1); controls.addWidget(browse_btn, r, 2); r += 1
         controls.addWidget(QLabel("Algorithm"), r, 0); controls.addWidget(self.algo_combo, r, 1); r += 1
         controls.addWidget(QLabel("Component"), r, 0); controls.addWidget(self.comp_combo, r, 1); r += 1
-        controls.addWidget(QLabel("Limit"), r, 0); controls.addWidget(self.limit_spin, r, 1); r += 1
+        controls.addWidget(QLabel("Measurements (n)"), r, 0); controls.addWidget(self.n_spin, r, 1); r += 1
         controls.addWidget(QLabel("Study Var (sv)"), r, 0); controls.addWidget(self.sv_spin, r, 1); r += 1
         controls.addWidget(QLabel("Alpha (av)"), r, 0); controls.addWidget(self.av_spin, r, 1); r += 1
         controls.addWidget(QLabel("Tolerance (tol)"), r, 0); controls.addWidget(self.tol_spin, r, 1); r += 1
@@ -364,17 +373,14 @@ class Type1Tab(QWidget):
             path = self.file_edit.text().strip()
             if not path:
                 raise ValueError("No file selected")
-            df = load_type1_data(path)
+            df = load_and_clean_data(path)
             # include/exclude
-            inc = set(to_list_from_tokens(self.include_edit.text().split()))
-            exc = set(to_list_from_tokens(self.exclude_edit.text().split()))
-            if inc:
-                df = df[df['Comp_Name'].isin(inc)].reset_index(drop=True)
-            if exc:
-                df = df[~df['Comp_Name'].isin(exc)].reset_index(drop=True)
+            inc = to_list_from_tokens(self.include_edit.text().split())
+            exc = to_list_from_tokens(self.exclude_edit.text().split())
+            df = apply_component_filters(df, include=inc, exclude=exc)
             self.df = df
             # Populate algorithms and components
-            measurement_cols = [c for c in df.columns if c not in ['Comp_Name','Component'] and str(df[c].dtype) in ['float64','int64']]
+            measurement_cols = get_measurement_columns(df)
             comps = sorted(df['Comp_Name'].unique().tolist())
             self.algo_combo.clear(); self.algo_combo.addItems(measurement_cols)
             self.comp_combo.clear(); self.comp_combo.addItems(comps)
@@ -392,17 +398,16 @@ class Type1Tab(QWidget):
             av = self.av_spin.value()
             tol_in = self.tol_spin.value()
             tf = self.tf_spin.value()
-            limit = self.limit_spin.value()
+            n = self.n_spin.value()
             prefix = self.prefix_edit.text().strip()
             merge = self.merge_chk.isChecked()
             remove_outliers = self.rm_chk.isChecked()
 
             subset = self.df[self.df['Comp_Name'] == comp].copy()
             values = subset[algo].dropna()
-            if limit and limit > 0:
-                values = values.iloc[:limit]
+            if n and n > 0:
+                values = values.iloc[:n]
             if remove_outliers:
-                from gage_rr_type1 import remove_outliers_iqr_series
                 before_n = len(values)
                 values, removed = remove_outliers_iqr_series(values)
                 QMessageBox.information(self, "Outlier Removal", f"Removed {removed} readings (from {before_n} to {len(values)}).")
@@ -472,51 +477,77 @@ class ParseTab(QWidget):
         browse_btn.clicked.connect(self._browse)
         self.prefix_edit = QLineEdit()
 
-        # Component include/exclude and column drop
-        self.include_edit = QLineEdit(); self.include_edit.setPlaceholderText("Include components (space/comma)")
-        self.exclude_edit = QLineEdit(); self.exclude_edit.setPlaceholderText("Exclude components (space/comma)")
-        self.dropcols_edit = QLineEdit(); self.dropcols_edit.setPlaceholderText("Drop columns (space/comma)")
+        # Component selection via dialog (no manual include/exclude text inputs)
 
-        # Measurement for outlier preview
-        self.algo_combo = QComboBox()
+        # Measurement dropdown removed from main UI; selection handled in IQR dialog
+        # self.algo_combo = QComboBox()
 
-        # Actions
+        # Actions (organized by flow)
         load_btn = QPushButton("Load File")
         load_btn.clicked.connect(self._load_file)
-        disp_comp_btn = QPushButton("Display Components")
-        disp_comp_btn.clicked.connect(self._display_components)
+        select_comp_btn = QPushButton("Select Components…")
+        select_comp_btn.clicked.connect(self._select_components_dialog)
+        select_algo_btn = QPushButton("Select Algorithms…")
+        select_algo_btn.clicked.connect(self._select_algorithms_dialog)
         preview_btn = QPushButton("Preview")
         preview_btn.clicked.connect(self._preview)
+        disp_comp_btn = QPushButton("Display Components")
+        disp_comp_btn.clicked.connect(self._display_components)
         preview_iqr_btn = QPushButton("Preview with IQR")
         preview_iqr_btn.clicked.connect(self._preview_with_iqr)
-        save_btn = QPushButton("Save CSV…")
-        save_btn.clicked.connect(self._save_csv)
+        save_btn = QPushButton("Save…")
+        save_btn.clicked.connect(self._save_dialog)
 
         r = 0
         controls.addWidget(QLabel("File"), r, 0); controls.addWidget(self.file_edit, r, 1); controls.addWidget(browse_btn, r, 2); r += 1
         controls.addWidget(QLabel("Output Prefix"), r, 0); controls.addWidget(self.prefix_edit, r, 1); r += 1
-        controls.addWidget(QLabel("Include"), r, 0); controls.addWidget(self.include_edit, r, 1); r += 1
-        controls.addWidget(QLabel("Exclude"), r, 0); controls.addWidget(self.exclude_edit, r, 1); r += 1
-        controls.addWidget(QLabel("Drop Cols"), r, 0); controls.addWidget(self.dropcols_edit, r, 1); r += 1
-        controls.addWidget(QLabel("Measurement"), r, 0); controls.addWidget(self.algo_combo, r, 1); r += 1
-        controls.addWidget(load_btn, r, 0); controls.addWidget(preview_btn, r, 1); controls.addWidget(save_btn, r, 2); r += 1
-        controls.addWidget(preview_iqr_btn, r, 1); controls.addWidget(disp_comp_btn, r, 2); r += 1
-
+        # Component include/exclude inputs removed; use Select Components… instead
+        # Only file/prefix rows in controls grid
         layout.addLayout(controls)
 
         # Components preview area
         self.comp_text = QTextEdit()
         self.comp_text.setReadOnly(True)
         self.comp_text.setMaximumHeight(90)
-        layout.addWidget(self.comp_text)
 
         # Status line
         self.status_lbl = QLabel("")
-        layout.addWidget(self.status_lbl)
 
         # Table preview
         self.table = TablePanel()
-        layout.addWidget(self.table)
+
+        # Build a row: left (controls already added above + preview widgets) and right (buttons column)
+        top_row = QHBoxLayout()
+
+        left_container = QWidget()
+        left_v = QVBoxLayout()
+        # controls already added to main layout; keep left content focused on preview/status
+        left_v.addWidget(self.comp_text)
+        left_v.addWidget(self.status_lbl)
+        left_v.addWidget(self.table)
+        left_container.setLayout(left_v)
+        top_row.addWidget(left_container, 1)
+
+        # Right buttons column with uniform size, Save at bottom
+        buttons_col = QVBoxLayout()
+        btns = [load_btn, select_comp_btn, select_algo_btn, preview_btn, preview_iqr_btn, disp_comp_btn]
+        try:
+            uniform_w = max(b.sizeHint().width() for b in btns)
+            uniform_h = max(b.sizeHint().height() for b in btns)
+        except Exception:
+            uniform_w, uniform_h = 140, 28
+        for b in btns:
+            b.setFixedWidth(uniform_w)
+            b.setFixedHeight(uniform_h)
+            buttons_col.addWidget(b)
+        buttons_col.addStretch(1)
+        # Save button at bottom-right
+        save_btn.setFixedWidth(uniform_w)
+        save_btn.setFixedHeight(uniform_h)
+        buttons_col.addWidget(save_btn)
+        top_row.addLayout(buttons_col)
+
+        layout.addLayout(top_row)
 
         self.setLayout(layout)
 
@@ -531,16 +562,11 @@ class ParseTab(QWidget):
             if not path:
                 raise ValueError("No file selected")
             # Reuse type1 loader (supports .txt and .csv)
-            df = load_type1_data(path)
+            df = load_and_clean_data(path)
             self.df_base = df.reset_index(drop=True)
             # Populate measurement list (numeric columns except component labels)
-            numeric_kinds = set(['i', 'u', 'f'])
-            meas_cols = [
-                c for c in self.df_base.columns
-                if c not in ['Comp_Name', 'Component', 'Operator', 'Part', 'Part_ID', 'Measurement_Order']
-                and hasattr(self.df_base[c].dtype, 'kind') and self.df_base[c].dtype.kind in numeric_kinds
-            ]
-            self.algo_combo.clear(); self.algo_combo.addItems(meas_cols)
+            meas_cols = get_measurement_columns(self.df_base)
+            # algo selection handled in dialog; keep count in status only
             self._set_status(f"Loaded: {len(self.df_base)} rows, {len(self.df_base.columns)} cols; {len(meas_cols)} numeric measurements")
             # Initial preview without filters
             self.df_preview = self.df_base.copy()
@@ -552,26 +578,88 @@ class ParseTab(QWidget):
         if self.df_base is None or 'Comp_Name' not in self.df_base.columns:
             self.comp_text.setPlainText("(No components to display)")
             return
-        comps = sorted(self.df_base['Comp_Name'].dropna().astype(str).unique().tolist())
-        preview = comps[:60]
-        self.comp_text.setPlainText(" | ".join(preview) if preview else "(none)")
+        preview = get_components_preview(self.df_base)
+        self.comp_text.setPlainText(preview)
 
     def _apply_filters(self, base_df):
         df = base_df.copy()
-        # Include/Exclude components
-        inc = set(to_list_from_tokens(self.include_edit.text().split()))
-        exc = set(to_list_from_tokens(self.exclude_edit.text().split()))
-        if 'Comp_Name' in df.columns:
-            if inc:
-                df = df[df['Comp_Name'].isin(inc)].reset_index(drop=True)
-            if exc:
-                df = df[~df['Comp_Name'].isin(exc)].reset_index(drop=True)
-        # Drop columns
-        drop_raw = set(to_list_from_tokens(self.dropcols_edit.text().split()))
-        drop_cols = [c for c in df.columns if c in drop_raw]
-        if drop_cols:
-            df = df.drop(columns=drop_cols)
+        # Apply selected components filter (if any)
+        if 'Comp_Name' in df.columns and hasattr(self, '_selected_components') and self._selected_components:
+            df = df[df['Comp_Name'].isin(set(self._selected_components))].reset_index(drop=True)
+        # Apply algorithm selection (selected measurement columns)
+        if hasattr(self, '_selected_algorithms') and self._selected_algorithms:
+            keep_cols = []
+            # Always keep identifier columns if present
+            for base_col in ['Comp_Name', 'Component']:
+                if base_col in df.columns:
+                    keep_cols.append(base_col)
+            keep_cols += [c for c in self._selected_algorithms if c in df.columns]
+            if keep_cols:
+                df = df[keep_cols]
         return df
+
+    def _select_algorithms_dialog(self):
+        if self.df_base is None:
+            QMessageBox.information(self, "Select Algorithms", "Load a file first.")
+            return
+        meas_cols = get_measurement_columns(self.df_base)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Select Algorithms")
+        layout = QVBoxLayout(dlg)
+        lst = QListWidget()
+        lst.setSelectionMode(QListWidget.NoSelection)
+        # Pre-check prior selection or default to all
+        preselected = set(getattr(self, '_selected_algorithms', meas_cols))
+        for col in meas_cols:
+            item = QListWidgetItem(col)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if col in preselected else Qt.Unchecked)
+            lst.addItem(item)
+        layout.addWidget(lst)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        layout.addWidget(buttons)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        if dlg.exec() == QDialog.Accepted:
+            selected = []
+            for i in range(lst.count()):
+                it = lst.item(i)
+                if it.checkState() == Qt.Checked:
+                    selected.append(it.text())
+            self._selected_algorithms = selected
+            QMessageBox.information(self, "Algorithms Selected", f"Selected {len(selected)} algorithms.")
+
+    def _select_components_dialog(self):
+        if self.df_base is None or 'Comp_Name' not in self.df_base.columns:
+            QMessageBox.information(self, "Select Components", "Load a file first.")
+            return
+        components = sorted(self.df_base['Comp_Name'].dropna().astype(str).unique().tolist())
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Select Components")
+        layout = QVBoxLayout(dlg)
+        lst = QListWidget()
+        lst.setSelectionMode(QListWidget.NoSelection)
+        preselected = set(getattr(self, '_selected_components', components))
+        for comp in components:
+            item = QListWidgetItem(comp)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if comp in preselected else Qt.Unchecked)
+            lst.addItem(item)
+        layout.addWidget(lst)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        layout.addWidget(buttons)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        if dlg.exec() == QDialog.Accepted:
+            selected = []
+            for i in range(lst.count()):
+                it = lst.item(i)
+                if it.checkState() == Qt.Checked:
+                    selected.append(it.text())
+            self._selected_components = selected
+            QMessageBox.information(self, "Components Selected", f"Selected {len(selected)} components.")
 
     def _preview(self):
         try:
@@ -596,7 +684,6 @@ class ParseTab(QWidget):
             df = self._apply_filters(self.df_base)
             if meas not in df.columns:
                 raise ValueError(f"Column not in preview: {meas}")
-            from gage_rr_analysis import remove_outliers_iqr
             before = len(df)
             df2, removed = remove_outliers_iqr(df, meas)
             self.df_preview = df2
@@ -620,6 +707,57 @@ class ParseTab(QWidget):
             self._render(df_check)
             self._set_status(f"Saved: {dst} | {len(df_check)} rows × {len(df_check.columns)} cols")
             QMessageBox.information(self, "Saved", f"Saved CSV to: {dst}")
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", str(e))
+
+    def _save_dialog(self):
+        try:
+            if self.df_preview is None or self.df_preview.empty:
+                raise ValueError("Nothing to save. Run Preview first.")
+            # Ask user for format
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Save Parsed Data")
+            lay = QVBoxLayout(dlg)
+            lay.addWidget(QLabel("Choose format:"))
+            btns = QDialogButtonBox()
+            btn_csv = btns.addButton("CSV", QDialogButtonBox.AcceptRole)
+            btn_txt = btns.addButton("TXT", QDialogButtonBox.AcceptRole)
+            btn_cancel = btns.addButton(QDialogButtonBox.Cancel)
+            lay.addWidget(btns)
+
+            chosen = {"fmt": None}
+            def choose_csv():
+                chosen["fmt"] = "csv"; dlg.accept()
+            def choose_txt():
+                chosen["fmt"] = "txt"; dlg.accept()
+            btn_csv.clicked.connect(choose_csv)
+            btn_txt.clicked.connect(choose_txt)
+            btn_cancel.clicked.connect(dlg.reject)
+
+            if dlg.exec() != QDialog.Accepted or not chosen["fmt"]:
+                return
+
+            prefix = self.prefix_edit.text().strip() or ""
+            if chosen["fmt"] == "csv":
+                suggested = prefix + "parsed_data.csv"
+                dst, _ = QFileDialog.getSaveFileName(self, "Save CSV As", suggested, "CSV Files (*.csv);;All Files (*)")
+                if not dst:
+                    return
+                self.df_preview.to_csv(dst, index=False)
+                import pandas as pd
+                df_check = pd.read_csv(dst)
+                self._render(df_check)
+                self._set_status(f"Saved: {dst} | {len(df_check)} rows × {len(df_check.columns)} cols")
+                QMessageBox.information(self, "Saved", f"Saved CSV to: {dst}")
+            else:
+                # TXT as tab-separated
+                suggested = prefix + "parsed_data.txt"
+                dst, _ = QFileDialog.getSaveFileName(self, "Save TXT As", suggested, "Text Files (*.txt);;All Files (*)")
+                if not dst:
+                    return
+                self.df_preview.to_csv(dst, index=False, sep='\t')
+                self._set_status(f"Saved: {dst} | {len(self.df_preview)} rows × {len(self.df_preview.columns)} cols")
+                QMessageBox.information(self, "Saved", f"Saved TXT to: {dst}")
         except Exception as e:
             QMessageBox.critical(self, "Save Error", str(e))
 

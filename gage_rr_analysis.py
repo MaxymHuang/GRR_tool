@@ -13,125 +13,17 @@ import json
 import warnings
 import argparse
 import sys
+from data_parser import (
+    load_and_clean_data, 
+    apply_component_filters, 
+    remove_outliers_iqr, 
+    get_measurement_columns, 
+    assign_operators_sequential
+)
 warnings.filterwarnings('ignore')
 
 
-def load_and_clean_data(file_path: str) -> pd.DataFrame:
-    """
-    Load and clean the measurement data file.
-    
-    Args:
-        file_path: Path to the input text file
-        
-    Returns:
-        Cleaned DataFrame with operator assignments
-    """
-    print(f"Loading data from {file_path}...")
-    
-    # Read the file
-    with open(file_path, 'r') as f:
-        lines = f.readlines()
-    
-    # Identify redundant header lines
-    header_lines = []
-    for i, line in enumerate(lines):
-        if line.startswith('Comp_Name\t'):
-            header_lines.append(i)
-    
-    print(f"Found {len(header_lines)} header lines at positions: {header_lines}")
-    
-    # Process each section separately and collect data rows
-    all_data_rows = []
-    first_header = None
-    
-    for section_idx in range(len(header_lines)):
-        start_line = header_lines[section_idx]
-        end_line = header_lines[section_idx + 1] if section_idx + 1 < len(header_lines) else len(lines)
-        
-        # Get header for this section
-        header = lines[start_line].strip().split('\t')
-        
-        # Use first header as reference
-        if first_header is None:
-            first_header = header
-        
-        # Get data rows for this section
-        section_lines = lines[start_line + 1:end_line]
-        
-        for line in section_lines:
-            if line.strip():  # Skip empty lines
-                parts = line.strip().split('\t')
-                if len(parts) > 0 and parts[0] and parts[0] != 'Comp_Name':
-                    # Create a dict with column mapping
-                    row_dict = {}
-                    for i, col in enumerate(header):
-                        if i < len(parts):
-                            row_dict[col] = parts[i]
-                        else:
-                            row_dict[col] = ''
-                    all_data_rows.append(row_dict)
-    
-    # Create DataFrame from all rows
-    df = pd.DataFrame(all_data_rows)
-    
-    print(f"Initial data shape: {df.shape}")
-    
-    # Remove specified columns
-    columns_to_remove = [
-        'Box_Name', 'Subtype_NO', 'BoardIn_NO', 'Scan_NO',
-        'CAD_X', 'CAD_Y', 'CAD_Width', 'CAD_Height', 'Board_Side'
-    ]
-    
-    existing_cols_to_remove = [col for col in columns_to_remove if col in df.columns]
-    df = df.drop(columns=existing_cols_to_remove)
-    
-    # Remove empty columns (all NaN or empty strings)
-    df = df.replace('', np.nan)
-    df = df.dropna(axis=1, how='all')
-    
-    # Convert numeric columns to float (all columns after Comp_Name)
-    numeric_cols = [col for col in df.columns if col != 'Comp_Name']
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    # Remove rows with all NaN in numeric columns
-    if len(numeric_cols) > 0:
-        df = df.dropna(subset=numeric_cols, how='all')
-    
-    # Remove rows where Comp_Name is empty
-    df = df[df['Comp_Name'].notna() & (df['Comp_Name'] != '')]
-    
-    print(f"Cleaned data shape: {df.shape}")
-    print(f"Columns retained: {list(df.columns)}")
-    
-    # Assign operators sequentially: every 3 consecutive measurements represent
-    # 3 operators (A, B, C) measuring the same "part"
-    # This simulates a Gage R&R study where measurements are taken in sequence
-    n_operators = 3
-    operators = ['A', 'B', 'C']
-    
-    print(f"\nAssigning operators sequentially (every {n_operators} consecutive measurements = 1 part)...")
-    
-    # Assign operator based on position mod 3
-    df['Operator'] = [operators[i % n_operators] for i in range(len(df))]
-    
-    # Create Part ID: every 3 consecutive measurements belong to the same part
-    df['Part_ID'] = np.arange(len(df)) // n_operators
-    df['Part'] = 'Part_' + df['Part_ID'].astype(str)
-    
-    # Also keep the original component name for reference
-    df['Component'] = df['Comp_Name']
-    
-    print(f"Operator distribution:")
-    print(df['Operator'].value_counts().sort_index())
-    print(f"\nTotal unique parts (measurement groups): {df['Part'].nunique()}")
-    
-    # Show sample for verification
-    print(f"\nSample assignment (first 12 rows):")
-    sample_data = df[['Component', 'Part', 'Operator']].head(12)
-    print(sample_data.to_string(index=False))
-    
-    return df
+# Data loading function moved to data_parser module
 
 
 def perform_anova_grr(df: pd.DataFrame, measurement_col: str, study_var: float = 6.0) -> Dict:
@@ -353,24 +245,7 @@ def create_anova_table(results: Dict) -> pd.DataFrame:
     return df
 
 
-def remove_outliers_iqr(df: pd.DataFrame, measurement_col: str) -> Tuple[pd.DataFrame, int]:
-    """
-    Remove outliers from df for the given measurement column using the IQR rule (1.5*IQR).
-    Returns the filtered DataFrame and the number of rows removed.
-    """
-    if measurement_col not in df.columns:
-        return df, 0
-    series = df[measurement_col].astype(float)
-    q1 = series.quantile(0.25)
-    q3 = series.quantile(0.75)
-    iqr = q3 - q1
-    if pd.isna(iqr) or iqr == 0:
-        return df, 0
-    lower = q1 - 1.5 * iqr
-    upper = q3 + 1.5 * iqr
-    mask = series.between(lower, upper, inclusive='both')
-    removed = int((~mask).sum())
-    return df[mask].reset_index(drop=True), removed
+# Outlier removal function moved to data_parser module
 
 
 def plot_components_of_variation(results: Dict, output_path: str):
@@ -938,6 +813,10 @@ Examples:
     parser.add_argument('--rm', '--remove-outliers',
                        action='store_true',
                        help='Remove outliers using IQR (1.5*IQR) for the selected measurement before analysis')
+    parser.add_argument('-n', '--num-measurements',
+                       type=int,
+                       default=0,
+                       help='Number of measurements to include per component (applies before operator assignment). Use 0 for all.')
     
     return parser.parse_args()
 
@@ -954,43 +833,14 @@ def main():
     print(f"\nInput file: {args.file}")
     df = load_and_clean_data(args.file)
     
-    # Normalize and apply exclusions (by Comp_Name)
-    if args.exclude:
-        exclude_raw = []
-        for token in args.exclude:
-            exclude_raw.extend([t.strip() for t in str(token).split(',') if t.strip()])
-        exclude_set = set(exclude_raw)
-        if exclude_set:
-            before_rows = len(df)
-            df = df[~df['Comp_Name'].isin(exclude_set)].reset_index(drop=True)
-            after_rows = len(df)
-            print(f"\nExcluding components: {sorted(list(exclude_set))}")
-            print(f"Rows before: {before_rows}, after: {after_rows}")
-            # Recompute operator and part assignments to maintain sequencing
-            n_operators = 3
-            operators = ['A', 'B', 'C']
-            df['Operator'] = [operators[i % n_operators] for i in range(len(df))]
-            df['Part_ID'] = np.arange(len(df)) // n_operators
-            df['Part'] = 'Part_' + df['Part_ID'].astype(str)
-
-    # Normalize and apply inclusions (by Comp_Name)
-    if args.include:
-        include_raw = []
-        for token in args.include:
-            include_raw.extend([t.strip() for t in str(token).split(',') if t.strip()])
-        include_set = set(include_raw)
-        if include_set:
-            before_rows = len(df)
-            df = df[df['Comp_Name'].isin(include_set)].reset_index(drop=True)
-            after_rows = len(df)
-            print(f"\nIncluding only components: {sorted(list(include_set))}")
-            print(f"Rows before: {before_rows}, after: {after_rows}")
-            # Recompute operator and part assignments to maintain sequencing
-            n_operators = 3
-            operators = ['A', 'B', 'C']
-            df['Operator'] = [operators[i % n_operators] for i in range(len(df))]
-            df['Part_ID'] = np.arange(len(df)) // n_operators
-            df['Part'] = 'Part_' + df['Part_ID'].astype(str)
+    # Apply component filters
+    df = apply_component_filters(df, include=args.include, exclude=args.exclude)
+    
+    # Optionally limit number of measurements per component prior to operator assignment
+    if args.num_measurements and args.num_measurements > 0 and 'Comp_Name' in df.columns:
+        df = df.groupby('Comp_Name', group_keys=False).apply(lambda g: g.head(args.num_measurements)).reset_index(drop=True)
+    # Assign operators for ANOVA analysis
+    df = assign_operators_sequential(df)
 
     # Preview components and exit if requested
     if args.display_comp:
@@ -1017,9 +867,7 @@ def main():
         return
     
     # Identify measurement columns (all numeric columns except Comp_Name)
-    measurement_cols = [col for col in df.columns 
-                       if col not in ['Comp_Name', 'Operator', 'Part', 'Component', 'Part_ID', 'Measurement_Order'] 
-                       and df[col].dtype in ['float64', 'int64']]
+    measurement_cols = get_measurement_columns(df)
     
     print(f"\nFound {len(measurement_cols)} measurement columns")
     

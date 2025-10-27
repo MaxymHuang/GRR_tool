@@ -28,120 +28,21 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy import stats
+from data_parser import (
+    load_and_clean_data,
+    apply_component_filters,
+    remove_outliers_iqr_series,
+    get_measurement_columns,
+    normalize_component_list
+)
 
 warnings.filterwarnings('ignore')
 
 
-def load_and_clean_data(file_path: str) -> pd.DataFrame:
-    """
-    Load and clean the measurement data file.
-    - If file is .csv: use pandas.read_csv directly.
-    - Else: parse custom tab-separated multi-section format.
-    The loader only cleans and standardizes the table.
-    """
-    print(f"Loading data from {file_path}...")
-
-    lower_path = str(file_path).lower()
-    if lower_path.endswith('.csv'):
-        # Robust CSV read for parsed datasets
-        df = pd.read_csv(file_path, engine='python')
-        print(f"Found 0 header lines at positions: []")
-        print(f"Initial data shape: {df.shape}")
-    else:
-        with open(file_path, 'r') as f:
-            lines = f.readlines()
-
-        # Identify header lines that begin sections
-        header_lines = []
-        for i, line in enumerate(lines):
-            if line.startswith('Comp_Name\t'):
-                header_lines.append(i)
-
-        print(f"Found {len(header_lines)} header lines at positions: {header_lines}")
-
-        all_data_rows = []
-        first_header = None
-
-        for section_idx in range(len(header_lines)):
-            start_line = header_lines[section_idx]
-            end_line = header_lines[section_idx + 1] if section_idx + 1 < len(header_lines) else len(lines)
-
-            header = lines[start_line].strip().split('\t')
-            if first_header is None:
-                first_header = header
-
-            section_lines = lines[start_line + 1:end_line]
-            for line in section_lines:
-                if line.strip():
-                    parts = line.strip().split('\t')
-                    if len(parts) > 0 and parts[0] and parts[0] != 'Comp_Name':
-                        row_dict = {}
-                        for i, col in enumerate(header):
-                            row_dict[col] = parts[i] if i < len(parts) else ''
-                        all_data_rows.append(row_dict)
-
-        df = pd.DataFrame(all_data_rows)
-        print(f"Initial data shape: {df.shape}")
-
-    # Remove specified columns if present
-    columns_to_remove = [
-        'Box_Name', 'Subtype_NO', 'BoardIn_NO', 'Scan_NO',
-        'CAD_X', 'CAD_Y', 'CAD_Width', 'CAD_Height', 'Board_Side'
-    ]
-    existing_cols_to_remove = [c for c in columns_to_remove if c in df.columns]
-    if existing_cols_to_remove:
-        df = df.drop(columns=existing_cols_to_remove)
-
-    # Normalize empties and drop all-empty columns
-    df = df.replace('', np.nan)
-    df = df.dropna(axis=1, how='all')
-
-    # Convert numeric columns (all except Comp_Name)
-    numeric_cols = [c for c in df.columns if c != 'Comp_Name']
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-    # Drop rows with all-NaN numeric data
-    if numeric_cols:
-        df = df.dropna(subset=numeric_cols, how='all')
-
-    # For CSVs produced by our parser, Comp_Name should exist; if not, try fallbacks
-    if 'Comp_Name' not in df.columns:
-        # Try common alternative naming
-        candidate_cols = [c for c in df.columns if c.lower() in ['comp_name', 'component']]
-        if candidate_cols:
-            df['Comp_Name'] = df[candidate_cols[0]]
-
-    # Keep valid Comp_Name if present
-    if 'Comp_Name' in df.columns:
-        df = df[df['Comp_Name'].notna() & (df['Comp_Name'] != '')]
-        # Keep original component name for convenience
-        df['Component'] = df['Comp_Name']
-
-    print(f"Cleaned data shape: {df.shape}")
-    print(f"Columns retained: {list(df.columns)}")
-
-    return df
+# Data loading function moved to data_parser module
 
 
-def remove_outliers_iqr_series(values: pd.Series) -> Tuple[pd.Series, int]:
-    """
-    Remove outliers from a numeric series using IQR (1.5*IQR) rule.
-    Returns the filtered series and the number of removed points.
-    """
-    series = values.dropna().astype(float)
-    if series.empty:
-        return series, 0
-    q1 = series.quantile(0.25)
-    q3 = series.quantile(0.75)
-    iqr = q3 - q1
-    if pd.isna(iqr) or iqr == 0:
-        return series, 0
-    lower = q1 - 1.5 * iqr
-    upper = q3 + 1.5 * iqr
-    mask = series.between(lower, upper, inclusive='both')
-    removed = int((~mask).sum())
-    return series[mask], removed
+# Outlier removal function moved to data_parser module
 
 
 def compute_type1_metrics(
@@ -518,8 +419,8 @@ Examples:
     parser.add_argument('--include', nargs='*', default=[],
                         help='Components (Comp_Name) to include; accept space or comma separated values')
 
-    parser.add_argument('--limit', type=int, default=30,
-                        help='Limit number of readings used for Type 1 (default: 30). Use <=0 for all.')
+    parser.add_argument('-n', '--num-measurements', type=int, default=30,
+                        help='Number of measurements to use for Type 1 (n). Use <=0 for all.')
 
     parser.add_argument('--rm', '--remove-outliers', action='store_true',
                         help='Remove outliers using IQR (1.5*IQR) for the selected series before analysis')
@@ -537,31 +438,8 @@ def main():
     print(f"\nInput file: {args.file}")
     df = load_and_clean_data(args.file)
 
-    # Apply exclusions (by Comp_Name) if provided
-    if args.exclude:
-        exclude_raw = []
-        for token in args.exclude:
-            exclude_raw.extend([t.strip() for t in str(token).split(',') if t.strip()])
-        exclude_set = set(exclude_raw)
-        if exclude_set:
-            before = len(df)
-            df = df[~df['Comp_Name'].isin(exclude_set)].reset_index(drop=True)
-            after = len(df)
-            print(f"\nExcluding components: {sorted(list(exclude_set))}")
-            print(f"Rows before: {before}, after: {after}")
-
-    # Apply includes (by Comp_Name) if provided
-    if args.include:
-        include_raw = []
-        for token in args.include:
-            include_raw.extend([t.strip() for t in str(token).split(',') if t.strip()])
-        include_set = set(include_raw)
-        if include_set:
-            before = len(df)
-            df = df[df['Comp_Name'].isin(include_set)].reset_index(drop=True)
-            after = len(df)
-            print(f"\nIncluding only components: {sorted(list(include_set))}")
-            print(f"Rows before: {before}, after: {after}")
+    # Apply component filters
+    df = apply_component_filters(df, include=args.include, exclude=args.exclude)
 
     # Parse-only mode
     if args.parse:
@@ -578,11 +456,7 @@ def main():
 
     # List mode
     # Identify measurement and components (numeric dtypes only)
-    numeric_kinds = set(['i', 'u', 'f'])  # int, unsigned, float
-    measurement_cols = [
-        c for c in df.columns
-        if c not in ['Comp_Name', 'Component'] and hasattr(df[c].dtype, 'kind') and df[c].dtype.kind in numeric_kinds
-    ]
+    measurement_cols = get_measurement_columns(df)
     components = sorted(df['Comp_Name'].unique().tolist())
 
     # Components preview (1x60 table)
@@ -623,11 +497,8 @@ def main():
     component = args.component
     if not component:
         # If include selects exactly one, use it
-        include_raw = []
-        if args.include:
-            for token in args.include:
-                include_raw.extend([t.strip() for t in str(token).split(',') if t.strip()])
-        include_set = sorted(list(set(include_raw)))
+        include_normalized = normalize_component_list(args.include) if args.include else []
+        include_set = sorted(list(set(include_normalized)))
         if len(include_set) == 1:
             component = include_set[0]
         else:
@@ -649,9 +520,9 @@ def main():
         subset = subset[subset['Operator'] == args.operator]
 
     values = subset[measurement].dropna()
-    # Apply limit if requested
-    if args.limit and args.limit > 0:
-        values = values.iloc[:args.limit]
+    # Apply n (number of measurements) if requested
+    if args.num_measurements and args.num_measurements > 0:
+        values = values.iloc[:args.num_measurements]
     # Optional outlier removal
     if args.rm:
         before_n = len(values)
