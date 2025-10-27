@@ -296,6 +296,7 @@ class Type1Tab(QWidget):
         self.sv_spin = QDoubleSpinBox(); self.sv_spin.setRange(0.001, 9999); self.sv_spin.setValue(6.0)
         self.av_spin = QDoubleSpinBox(); self.av_spin.setRange(0.0001, 1.0); self.av_spin.setSingleStep(0.005); self.av_spin.setValue(0.25)
         self.tol_spin = QDoubleSpinBox(); self.tol_spin.setRange(0.0, 1e9); self.tol_spin.setDecimals(6); self.tol_spin.setSingleStep(0.1); self.tol_spin.setValue(0.0); self.tol_spin.setSpecialValueText("Auto")
+        self.tf_spin = QDoubleSpinBox(); self.tf_spin.setRange(0.0, 1e6); self.tf_spin.setDecimals(6); self.tf_spin.setSingleStep(0.1); self.tf_spin.setValue(1.0)
         self.prefix_edit = QLineEdit()
         self.merge_chk = QCheckBox("Merge charts")
         self.rm_chk = QCheckBox("Remove outliers (IQR)")
@@ -316,6 +317,7 @@ class Type1Tab(QWidget):
         controls.addWidget(QLabel("Study Var (sv)"), r, 0); controls.addWidget(self.sv_spin, r, 1); r += 1
         controls.addWidget(QLabel("Alpha (av)"), r, 0); controls.addWidget(self.av_spin, r, 1); r += 1
         controls.addWidget(QLabel("Tolerance (tol)"), r, 0); controls.addWidget(self.tol_spin, r, 1); r += 1
+        controls.addWidget(QLabel("Tol. Factor (tf)"), r, 0); controls.addWidget(self.tf_spin, r, 1); r += 1
         controls.addWidget(QLabel("Output Prefix"), r, 0); controls.addWidget(self.prefix_edit, r, 1); controls.addWidget(self.merge_chk, r, 2); r += 1
         controls.addWidget(QLabel("Include"), r, 0); controls.addWidget(self.include_edit, r, 1); r += 1
         controls.addWidget(QLabel("Exclude"), r, 0); controls.addWidget(self.exclude_edit, r, 1); r += 1
@@ -389,6 +391,7 @@ class Type1Tab(QWidget):
             sv = self.sv_spin.value()
             av = self.av_spin.value()
             tol_in = self.tol_spin.value()
+            tf = self.tf_spin.value()
             limit = self.limit_spin.value()
             prefix = self.prefix_edit.text().strip()
             merge = self.merge_chk.isChecked()
@@ -407,7 +410,7 @@ class Type1Tab(QWidget):
                 raise ValueError("Not enough readings after filtering/limit")
 
             tol_val = None if tol_in <= 0 else float(tol_in)
-            metrics = compute_type1_metrics(values, sv=sv, tol=tol_val, target=None, alpha=av)
+            metrics = compute_type1_metrics(values, sv=sv, tol=tol_val, target=None, alpha=av, tolerance_factor=tf)
             summary = create_type1_summary_df(metrics)
             self.summary_table.load_dataframe(summary)
 

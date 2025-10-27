@@ -150,6 +150,7 @@ def compute_type1_metrics(
     tol: Optional[float] = None,
     target: Optional[float] = None,
     alpha: float = 0.25,
+    tolerance_factor: float = 1.0,
 ) -> Dict:
     """
     Compute Type 1 gage study metrics given a series of repeated measurements.
@@ -179,6 +180,10 @@ def compute_type1_metrics(
     lsl = target - tol / 2.0
     usl = target + tol / 2.0
 
+    # Control limits based on tolerance factor
+    ucl = target + 0.5 * tolerance_factor * tol
+    lcl = target - 0.5 * tolerance_factor * tol
+
     # Capability indices for gage
     cg = tol / (sv * sd) if (sv > 0 and sd > 0) else np.nan
     cgk = min(usl - mean_val, mean_val - lsl) / (3.0 * sd) if sd > 0 else np.nan
@@ -204,9 +209,12 @@ def compute_type1_metrics(
         'sd': sd,
         'study_var': study_var,
         'tol': float(tol),
+        'tf': float(tolerance_factor),
         'target': float(target),
         'lsl': float(lsl),
         'usl': float(usl),
+        'lcl': float(lcl),
+        'ucl': float(ucl),
         'cg': float(cg) if not np.isnan(cg) else np.nan,
         'cgk': float(cgk) if not np.isnan(cgk) else np.nan,
         'bias': float(bias),
@@ -235,9 +243,12 @@ def create_type1_summary_df(metrics: Dict) -> pd.DataFrame:
         'sd': format4(metrics['sd']),
         '6sigma': format4(metrics['study_var']),
         'tol': format4(metrics['tol']),
+        'tf': format4(metrics.get('tf', 1.0)),
         'target': format4(metrics['target']),
         'LSL': format4(metrics['lsl']),
         'USL': format4(metrics['usl']),
+        'LCL': format4(metrics.get('lcl', np.nan)),
+        'UCL': format4(metrics.get('ucl', np.nan)),
         'Cg': format4(metrics['cg']),
         'Cgk': format4(metrics['cgk']),
         'bias': format4(metrics['bias']),
@@ -271,6 +282,10 @@ def plot_distribution_vs_tolerance(values: pd.Series, metrics: Dict, output_path
     ax.axvline(target, color='green', linestyle='-', linewidth=2, label=f'Target={format4(target)}')
     ax.axvline(lsl, color='red', linestyle='--', linewidth=2, label=f'LSL={format4(lsl)}')
     ax.axvline(usl, color='red', linestyle='--', linewidth=2, label=f'USL={format4(usl)}')
+    # UCL/LCL per tolerance factor
+    if 'lcl' in metrics and 'ucl' in metrics:
+        ax.axvline(metrics['lcl'], color='purple', linestyle='-.', linewidth=1.8, label=f'LCL={format4(metrics["lcl"])}')
+        ax.axvline(metrics['ucl'], color='purple', linestyle='-.', linewidth=1.8, label=f'UCL={format4(metrics["ucl"])}')
     ax.axvline(mean_val, color='orange', linestyle=':', linewidth=2, label=f'Mean={format4(mean_val)}')
 
     ax.set_title('Distribution vs Tolerance', fontsize=14, fontweight='bold')
@@ -375,6 +390,9 @@ def plot_merged(values: pd.Series, metrics: Dict, measurement: str, output_path:
     ax1.axvline(target, color='green', linewidth=2)
     ax1.axvline(lsl, color='red', linestyle='--', linewidth=2)
     ax1.axvline(usl, color='red', linestyle='--', linewidth=2)
+    if 'lcl' in metrics and 'ucl' in metrics:
+        ax1.axvline(metrics['lcl'], color='purple', linestyle='-.', linewidth=1.8)
+        ax1.axvline(metrics['ucl'], color='purple', linestyle='-.', linewidth=1.8)
     ax1.axvline(mean_val, color='orange', linestyle=':', linewidth=2)
     ax1.set_title('Distribution vs Tolerance', fontsize=12, fontweight='bold')
     ax1.grid(axis='y', alpha=0.3)
@@ -412,8 +430,8 @@ def plot_merged(values: pd.Series, metrics: Dict, measurement: str, output_path:
     summary = (
         f"n={metrics['n']}\n"
         f"mean={format4(metrics['mean'])}  median(target)={format4(metrics['target'])}  sd={format4(metrics['sd'])}\n"
-        f"6σ={format4(metrics['study_var'])}  tol={format4(metrics['tol'])}\n"
-        f"LSL={format4(metrics['lsl'])}  USL={format4(metrics['usl'])}\n"
+        f"6σ={format4(metrics['study_var'])}  tol={format4(metrics['tol'])}  tf={format4(metrics.get('tf', 1.0))}\n"
+        f"LSL={format4(metrics['lsl'])}  USL={format4(metrics['usl'])}  LCL={format4(metrics.get('lcl', np.nan))}  UCL={format4(metrics.get('ucl', np.nan))}\n"
         f"Cg={format4(metrics['cg'])}  Cgk={format4(metrics['cgk'])}\n"
         f"bias={format4(metrics['bias'])}  bias%tol={format4(metrics['bias_pct_tol'])}%\n"
         f"t={format4(metrics['t'])}  p={format4(metrics['p'])}\n"
@@ -475,6 +493,9 @@ Examples:
 
     parser.add_argument('--av', '--alpha', type=float, default=0.25,
                         help='Alpha value for confidence intervals (default: 0.25)')
+
+    parser.add_argument('--tf', '--tolerance-factor', type=float, default=1.0,
+                        help='Tolerance factor to scale control limits around target (UCL/LCL). Default 1.0')
 
     parser.add_argument('--list', action='store_true',
                         help='List available measurement columns and components and exit')
@@ -641,7 +662,7 @@ def main():
         return
 
     # Compute metrics
-    metrics = compute_type1_metrics(values, sv=args.sv, tol=args.tol, target=args.target, alpha=args.av)
+    metrics = compute_type1_metrics(values, sv=args.sv, tol=args.tol, target=args.target, alpha=args.av, tolerance_factor=args.tf)
 
     # Output prefix
     prefix = args.output_prefix
