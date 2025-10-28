@@ -817,6 +817,10 @@ Examples:
                        type=int,
                        default=0,
                        help='Number of measurements to include per component (applies before operator assignment). Use 0 for all.')
+    parser.add_argument('--operator',
+                       type=int,
+                       default=3,
+                       help='Number of operators to simulate (1–10). Default: 3')
     
     return parser.parse_args()
 
@@ -840,7 +844,7 @@ def main():
     if args.num_measurements and args.num_measurements > 0 and 'Comp_Name' in df.columns:
         df = df.groupby('Comp_Name', group_keys=False).apply(lambda g: g.head(args.num_measurements)).reset_index(drop=True)
     # Assign operators for ANOVA analysis
-    df = assign_operators_sequential(df)
+    df = assign_operators_sequential(df, n_operators=args.operator)
 
     # Preview components and exit if requested
     if args.display_comp:
@@ -898,6 +902,7 @@ def main():
     print(f"  - Study Variation: {args.sv}")
     print(f"  - Alpha Value: {args.av}")
     print(f"  - Output Prefix: '{args.output_prefix}'")
+    print(f"  - Operators: {max(1, min(int(getattr(args, 'operator', 3) or 1), 10))}")
     
     # Optional outlier removal on the selected measurement
     if args.rm:

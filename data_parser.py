@@ -9,11 +9,13 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Set
 import warnings
+import argparse
+import sys
 
 warnings.filterwarnings('ignore')
 
 
-def load_and_clean_data(file_path: str) -> pd.DataFrame:
+def load_and_clean_data(file_path: str, keep_all_columns: bool = False) -> pd.DataFrame:
     """
     Load and clean the measurement data file.
     
@@ -70,18 +72,21 @@ def load_and_clean_data(file_path: str) -> pd.DataFrame:
         df = pd.DataFrame(all_data_rows)
         print(f"Initial data shape: {df.shape}")
     
-    # Remove specified columns if present
-    columns_to_remove = [
-        'Subtype_NO', 'BoardIn_NO', 'Scan_NO',
-        'CAD_X', 'CAD_Y', 'CAD_Width', 'CAD_Height', 'Board_Side'
-    ]
-    existing_cols_to_remove = [c for c in columns_to_remove if c in df.columns]
-    if existing_cols_to_remove:
-        df = df.drop(columns=existing_cols_to_remove)
+    # Optionally keep all original columns without dropping anything
+    if not keep_all_columns:
+        # Remove specified columns if present
+        columns_to_remove = [
+            'Subtype_NO', 'BoardIn_NO', 'Scan_NO',
+            'CAD_X', 'CAD_Y', 'CAD_Width', 'CAD_Height', 'Board_Side'
+        ]
+        existing_cols_to_remove = [c for c in columns_to_remove if c in df.columns]
+        if existing_cols_to_remove:
+            df = df.drop(columns=existing_cols_to_remove)
     
-    # Normalize empties and drop all-empty columns
+    # Normalize empties and optionally drop all-empty columns
     df = df.replace('', np.nan)
-    df = df.dropna(axis=1, how='all')
+    if not keep_all_columns:
+        df = df.dropna(axis=1, how='all')
     
     # Convert numeric columns (all except Comp_Name)
     numeric_cols = [c for c in df.columns if c != 'Comp_Name']
@@ -92,27 +97,28 @@ def load_and_clean_data(file_path: str) -> pd.DataFrame:
     if numeric_cols:
         df = df.dropna(subset=numeric_cols, how='all')
     
-    # For CSVs produced by our parser, Comp_Name should exist; if not, try fallbacks
-    if 'Comp_Name' not in df.columns:
-        # Try common alternative naming
-        candidate_cols = [c for c in df.columns if c.lower() in ['comp_name', 'component']]
-        if candidate_cols:
-            df['Comp_Name'] = df[candidate_cols[0]]
+    # For CSVs produced by our parser, Comp_Name should exist; if not, try fallbacks (skip in raw mode)
+    if not keep_all_columns:
+        if 'Comp_Name' not in df.columns:
+            candidate_cols = [c for c in df.columns if c.lower() in ['comp_name', 'component']]
+            if candidate_cols:
+                df['Comp_Name'] = df[candidate_cols[0]]
     
-    # Keep valid Comp_Name; set Component as Comp_Name or Comp_Name_Box when Box present
-    if 'Comp_Name' in df.columns:
-        df = df[df['Comp_Name'].notna() & (df['Comp_Name'] != '')]
-        df['Comp_Name'] = df['Comp_Name'].astype(str).str.strip()
-        if 'Box_Name' in df.columns:
-            df['Box_Name'] = df['Box_Name'].astype(str).str.strip()
-            has_box = df['Box_Name'].notna() & (df['Box_Name'] != '')
-            df['Component'] = np.where(
-                has_box,
-                df['Comp_Name'] + '_' + df['Box_Name'],
-                df['Comp_Name']
-            )
-        else:
-            df['Component'] = df['Comp_Name']
+    # Keep valid Comp_Name; set Component as Comp_Name or Comp_Name_Box when Box present (skip in raw mode)
+    if not keep_all_columns:
+        if 'Comp_Name' in df.columns:
+            df = df[df['Comp_Name'].notna() & (df['Comp_Name'] != '')]
+            df['Comp_Name'] = df['Comp_Name'].astype(str).str.strip()
+            if 'Box_Name' in df.columns:
+                df['Box_Name'] = df['Box_Name'].astype(str).str.strip()
+                has_box = df['Box_Name'].notna() & (df['Box_Name'] != '')
+                df['Component'] = np.where(
+                    has_box,
+                    df['Comp_Name'] + '_' + df['Box_Name'],
+                    df['Comp_Name']
+                )
+            else:
+                df['Component'] = df['Comp_Name']
     
     print(f"Cleaned data shape: {df.shape}")
     print(f"Columns retained: {list(df.columns)}")
@@ -242,15 +248,23 @@ def assign_operators_sequential(df: pd.DataFrame, n_operators: int = 3) -> pd.Da
     Returns:
         DataFrame with Operator and Part columns added
     """
-    operators = [chr(ord('A') + i) for i in range(n_operators)]
+    # Clamp operator count into [1, 10]
+    try:
+        n = int(n_operators)
+    except Exception:
+        n = 3
+    n = max(1, min(n, 10))
+    if len(df) == 0:
+        return df
+    operators = [chr(ord('A') + i) for i in range(n)]
     
-    print(f"\nAssigning operators sequentially (every {n_operators} consecutive measurements = 1 part)...")
+    print(f"\nAssigning operators sequentially (every {n} consecutive measurements = 1 part)...")
     
     # Assign operator based on position mod n_operators
-    df['Operator'] = [operators[i % n_operators] for i in range(len(df))]
+    df['Operator'] = [operators[i % n] for i in range(len(df))]
     
     # Create Part ID: every n_operators consecutive measurements belong to the same part
-    df['Part_ID'] = np.arange(len(df)) // n_operators
+    df['Part_ID'] = np.arange(len(df)) // n
     df['Part'] = 'Part_' + df['Part_ID'].astype(str)
     
     print(f"Operator distribution:")
@@ -263,6 +277,52 @@ def assign_operators_sequential(df: pd.DataFrame, n_operators: int = 3) -> pd.Da
     print(sample_data.to_string(index=False))
     
     return df
+
+
+def _parse_args_for_cli():
+    parser = argparse.ArgumentParser(
+        description='Parse and prepare measurement data with optional component filters and operator assignment',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument('-f', '--file',
+                        required=True,
+                        help='Input data file path (.txt multi-section or .csv)')
+    parser.add_argument('--include',
+                        nargs='*',
+                        default=[],
+                        help='Components (Comp_Name) to include; space or comma separated')
+    parser.add_argument('--exclude',
+                        nargs='*',
+                        default=[],
+                        help='Components (Comp_Name) to exclude; space or comma separated')
+    parser.add_argument('--operator',
+                        type=int,
+                        default=3,
+                        help='Number of operators to simulate (1–10). Default: 3')
+    parser.add_argument('-o', '--output',
+                        default='',
+                        help='Output CSV file path. If omitted, no file is written')
+    return parser.parse_args()
+
+
+def _main_cli():
+    args = _parse_args_for_cli()
+    print("="*70)
+    print("DATA PARSER")
+    print("="*70)
+    print(f"\nInput file: {args.file}")
+    df = load_and_clean_data(args.file)
+    df = apply_component_filters(df, include=args.include, exclude=args.exclude)
+    df = assign_operators_sequential(df, n_operators=args.operator)
+    print(f"\nFinal shape: {df.shape[0]} rows × {df.shape[1]} columns")
+    print(f"Columns: {list(df.columns)}")
+    if args.output:
+        df.to_csv(args.output, index=False)
+        print(f"\nSaved CSV to: {args.output}")
+
+
+if __name__ == '__main__':
+    _main_cli()
 
 
 def remove_outliers_iqr(df: pd.DataFrame, measurement_col: str) -> Tuple[pd.DataFrame, int]:

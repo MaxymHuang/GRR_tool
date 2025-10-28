@@ -27,7 +27,8 @@ from data_parser import (
     remove_outliers_iqr,
     remove_outliers_iqr_series,
     get_measurement_columns,
-    get_components_preview
+    get_components_preview,
+    assign_operators_sequential
 )
 
 from gage_rr_analysis import perform_anova_grr, create_anova_table
@@ -142,6 +143,7 @@ class AnovaTab(QWidget):
         self.algo_combo = QComboBox()
         self.sv_spin = QDoubleSpinBox(); self.sv_spin.setRange(0.001, 9999); self.sv_spin.setValue(6.0)
         self.av_spin = QDoubleSpinBox(); self.av_spin.setRange(0.0001, 1.0); self.av_spin.setSingleStep(0.005); self.av_spin.setValue(0.025)
+        self.op_spin = QSpinBox(); self.op_spin.setRange(1, 10); self.op_spin.setValue(3)
         self.prefix_edit = QLineEdit()
         self.merge_chk = QCheckBox("Merge charts")
 
@@ -158,6 +160,7 @@ class AnovaTab(QWidget):
         controls.addWidget(QLabel("Algorithm"), r, 0); controls.addWidget(self.algo_combo, r, 1); r += 1
         controls.addWidget(QLabel("Study Var (sv)"), r, 0); controls.addWidget(self.sv_spin, r, 1); r += 1
         controls.addWidget(QLabel("Alpha (av)"), r, 0); controls.addWidget(self.av_spin, r, 1); r += 1
+        controls.addWidget(QLabel("Operators"), r, 0); controls.addWidget(self.op_spin, r, 1); r += 1
         controls.addWidget(QLabel("Output Prefix"), r, 0); controls.addWidget(self.prefix_edit, r, 1); controls.addWidget(self.merge_chk, r, 2); r += 1
         controls.addWidget(QLabel("Exclude"), r, 0); controls.addWidget(self.exclude_edit, r, 1); r += 1
         controls.addWidget(load_btn, r, 0); controls.addWidget(run_btn, r, 1); r += 1
@@ -229,7 +232,7 @@ class AnovaTab(QWidget):
             remove_outliers = self.rm_chk.isChecked()
 
             # Optionally remove outliers for the chosen measurement
-            run_df = self.df
+            run_df = assign_operators_sequential(self.df.copy(), n_operators=self.op_spin.value())
             if remove_outliers:
                 before = len(run_df)
                 run_df, removed = remove_outliers_iqr(run_df, algo)
@@ -242,7 +245,7 @@ class AnovaTab(QWidget):
             # Save plots to tmp then display
             if merge:
                 merged_path = os.path.join(self.tmpdir, f"{prefix}merged_analysis.png")
-                plot_merged_charts(self.df, results, algo, merged_path)
+                plot_merged_charts(run_df, results, algo, merged_path)
                 # Load into the first image slot
                 self.img_cov.set_image(merged_path)
                 self.img_alg.set_image("")
@@ -476,6 +479,8 @@ class ParseTab(QWidget):
         browse_btn = QPushButton("Browse")
         browse_btn.clicked.connect(self._browse)
         self.prefix_edit = QLineEdit()
+        self.op_spin = QSpinBox(); self.op_spin.setRange(1, 10); self.op_spin.setValue(3)
+        self.keep_raw_chk = QCheckBox("Keep all columns (raw)")
 
         # Component selection via dialog (no manual include/exclude text inputs)
 
@@ -501,6 +506,8 @@ class ParseTab(QWidget):
         r = 0
         controls.addWidget(QLabel("File"), r, 0); controls.addWidget(self.file_edit, r, 1); controls.addWidget(browse_btn, r, 2); r += 1
         controls.addWidget(QLabel("Output Prefix"), r, 0); controls.addWidget(self.prefix_edit, r, 1); r += 1
+        controls.addWidget(QLabel("Operators"), r, 0); controls.addWidget(self.op_spin, r, 1); r += 1
+        controls.addWidget(self.keep_raw_chk, r, 1); r += 1
         # Component include/exclude inputs removed; use Select Components… instead
         # Only file/prefix rows in controls grid
         layout.addLayout(controls)
@@ -562,14 +569,18 @@ class ParseTab(QWidget):
             if not path:
                 raise ValueError("No file selected")
             # Reuse type1 loader (supports .txt and .csv)
-            df = load_and_clean_data(path)
+            df = load_and_clean_data(path, keep_all_columns=self.keep_raw_chk.isChecked())
             self.df_base = df.reset_index(drop=True)
             # Populate measurement list (numeric columns except component labels)
             meas_cols = get_measurement_columns(self.df_base)
             # algo selection handled in dialog; keep count in status only
             self._set_status(f"Loaded: {len(self.df_base)} rows, {len(self.df_base.columns)} cols; {len(meas_cols)} numeric measurements")
             # Initial preview without filters
-            self.df_preview = self.df_base.copy()
+            # Assign operators unless raw mode is enabled
+            if self.keep_raw_chk.isChecked():
+                self.df_preview = self.df_base.copy()
+            else:
+                self.df_preview = assign_operators_sequential(self.df_base.copy(), n_operators=self.op_spin.value())
             self._render(self.df_preview)
         except Exception as e:
             QMessageBox.critical(self, "Load Error", str(e))
@@ -596,6 +607,9 @@ class ParseTab(QWidget):
             keep_cols += [c for c in self._selected_algorithms if c in df.columns]
             if keep_cols:
                 df = df[keep_cols]
+        # Assign operators after filtering, unless raw mode is enabled
+        if not self.keep_raw_chk.isChecked():
+            df = assign_operators_sequential(df, n_operators=self.op_spin.value())
         return df
 
     def _select_algorithms_dialog(self):
