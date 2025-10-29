@@ -27,6 +27,13 @@ uv pip install -r requirements.txt
 pip install -r requirements.txt
 ```
 
+## Windows Executable Build
+
+- Install PyInstaller inside the project environment: `uv pip install pyinstaller`
+- Run the build helper from a Windows shell: `python scripts/build_windows.py`
+- The packaged app is written to `dist/windows`, with intermediates in `build/windows`
+- Pass `--debug` to the script to see verbose PyInstaller logs if troubleshooting
+
 ## Usage (Type I ANOVA Script)
 
 ### Command Line Interface
