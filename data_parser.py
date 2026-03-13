@@ -89,7 +89,8 @@ def load_and_clean_data(file_path: str, keep_all_columns: bool = False) -> pd.Da
         df = df.dropna(axis=1, how='all')
     
     # Convert numeric columns (all except Comp_Name)
-    numeric_cols = [c for c in df.columns if c != 'Comp_Name']
+    non_numeric_cols = {'Comp_Name', 'Box_Name'}
+    numeric_cols = [c for c in df.columns if c not in non_numeric_cols]
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
@@ -232,7 +233,7 @@ def get_measurement_columns(df: pd.DataFrame) -> List[str]:
     Returns:
         List of measurement column names
     """
-    metadata_cols = {'Comp_Name', 'Component', 'Operator', 'Part', 'Part_ID', 'Measurement_Order'}
+    metadata_cols = {'Comp_Name', 'Box_Name', 'Component', 'Operator', 'Part', 'Part_ID', 'Measurement_Order'}
     numeric_cols = get_numeric_columns(df)
     return [c for c in numeric_cols if c not in metadata_cols]
 
