@@ -47,9 +47,9 @@ Use `--include`, `--exclude`, `--operator`, and `-o` / `--output` for CLI mode, 
 ## Windows Executable Build
 
 - Install PyInstaller inside the project environment: `uv pip install pyinstaller`
-- Run the build helper from a Windows shell: `python scripts/build_windows.py`
-- The packaged app is written to `dist/windows`, with intermediates in `build/windows`
-- Pass `--debug` to the script to see verbose PyInstaller logs if troubleshooting
+- **GRRTool (full desktop app):** from the repo root, `uv run python scripts/build_windows.py` — output in `dist/windows/GRRTool.exe` (see `GRRTool.spec`)
+- **Data Parser (standalone):** `uv run python scripts/build_data_parser_windows.py` — output `dist/windows-data-parser/DataParser.exe` (`DataParser.spec`). Built as a windowed app (GUI); for CLI with printed output, use `uv run python -m data_parser_app -f ...` from source
+- Pass `--debug` to either script for verbose PyInstaller logs when troubleshooting
 
 ## Usage (Type I ANOVA Script)
 

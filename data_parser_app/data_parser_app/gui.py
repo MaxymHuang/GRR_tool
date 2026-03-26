@@ -9,34 +9,6 @@ QMainWindow, QWidget {
     font-size: 13px;
 }
 
-/* ===== Tab Widget ===== */
-QTabWidget::pane {
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    background-color: #1e1e2e;
-    top: -1px;
-}
-QTabBar::tab {
-    background-color: #313244;
-    color: #a6adc8;
-    padding: 10px 28px;
-    margin-right: 2px;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
-    font-weight: 500;
-    font-size: 13px;
-}
-QTabBar::tab:selected {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-    border: 1px solid #45475a;
-    border-bottom: 2px solid #7c8aff;
-}
-QTabBar::tab:hover:!selected {
-    background-color: #3b3b52;
-    color: #cdd6f4;
-}
-
 /* ===== Group Box (Cards) ===== */
 QGroupBox {
     background-color: #2a2a3c;
@@ -147,6 +119,27 @@ QCheckBox::indicator:checked {
     border-color: #7c8aff;
 }
 QCheckBox::indicator:hover {
+    border-color: #7c8aff;
+}
+
+/* ===== Radio ===== */
+QRadioButton {
+    spacing: 8px;
+    color: #cdd6f4;
+    padding: 4px 0;
+}
+QRadioButton::indicator {
+    width: 18px;
+    height: 18px;
+    border-radius: 9px;
+    border: 1px solid #45475a;
+    background-color: #313244;
+}
+QRadioButton::indicator:checked {
+    background-color: #7c8aff;
+    border-color: #7c8aff;
+}
+QRadioButton::indicator:hover {
     border-color: #7c8aff;
 }
 
@@ -295,12 +288,11 @@ import pandas as pd
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
+    QButtonGroup,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -311,7 +303,10 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QRadioButton,
+    QScrollArea,
     QSpinBox,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -348,12 +343,10 @@ def _make_status_label(text: str = "") -> QLabel:
     return lbl
 
 
-def _make_vsep() -> QFrame:
-    sep = QFrame()
-    sep.setFrameShape(QFrame.Shape.VLine)
-    sep.setStyleSheet("color: #45475a;")
-    sep.setFixedWidth(2)
-    return sep
+def _make_heading(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setProperty("cssClass", "heading")
+    return lbl
 
 
 class TablePanel(QTableWidget):
@@ -390,86 +383,167 @@ class ParseTabWidget(QWidget):
         self._selected_algorithms = []
         self._init_ui()
 
-    def _init_ui(self) -> None:
-        main = QVBoxLayout()
-        main.setSpacing(10)
-        main.setContentsMargins(16, 12, 16, 12)
+    def _preserve_source_columns(self) -> bool:
+        return self.radio_original.isChecked()
 
-        file_grp = QGroupBox("File && Settings")
-        fg = QGridLayout()
-        fg.setSpacing(8)
+    def _on_mode_changed(self) -> None:
+        prepared = self.radio_prepared.isChecked()
+        self.op_spin.setEnabled(prepared)
+        self.op_spin.setToolTip(
+            ""
+            if prepared
+            else "Not used in original-columns mode (no Operator / Part columns are added)."
+        )
+        # Do not load from disk here — only "Load File" should read the file.
+        if self.df_base is not None:
+            self.df_base = None
+            self.df_preview = None
+            self.algo_combo.clear()
+            self.comp_text.clear()
+            self._render(None)
+            self._set_status("Loading mode changed — click Load File to reload data.")
+
+    def _init_ui(self) -> None:
+        root = QHBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(0)
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setMinimumWidth(340)
+        left_scroll.setMaximumWidth(440)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_panel = QWidget()
+        left_l = QVBoxLayout(left_panel)
+        left_l.setSpacing(10)
+        left_l.setContentsMargins(0, 0, 8, 0)
+
+        src_grp = QGroupBox("Data source")
+        sg = QGridLayout()
+        sg.setSpacing(8)
         self.file_edit = QLineEdit()
         self.file_edit.setPlaceholderText("Select a data file (.txt or .csv)")
-        browse_btn = QPushButton("Browse?")
+        browse_btn = QPushButton("Browse…")
         browse_btn.clicked.connect(self._browse)
         self.prefix_edit = QLineEdit()
         self.prefix_edit.setPlaceholderText("Optional output filename prefix")
+        sg.addWidget(QLabel("Data File"), 0, 0)
+        sg.addWidget(self.file_edit, 0, 1)
+        sg.addWidget(browse_btn, 0, 2)
+        sg.addWidget(QLabel("Output Prefix"), 1, 0)
+        sg.addWidget(self.prefix_edit, 1, 1, 1, 2)
+        sg.setColumnStretch(1, 1)
+        src_grp.setLayout(sg)
+
+        mode_grp = QGroupBox("Loading mode")
+        mv = QVBoxLayout()
+        mv.setSpacing(6)
+        self.radio_prepared = QRadioButton("Prepared for Gage R&R")
+        self.radio_original = QRadioButton("Original columns only (no derived columns)")
+        self.radio_prepared.setChecked(True)
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.addButton(self.radio_prepared, 0)
+        self.mode_group.addButton(self.radio_original, 1)
+        self.mode_group.buttonClicked.connect(lambda _: self._on_mode_changed())
+        mode_hint = QLabel(
+            "Prepared: drop auxiliary fields, add Component, and you can assign operators for export. "
+            "Original: keep file columns; no Component, Operator, or Part columns."
+        )
+        mode_hint.setWordWrap(True)
+        mode_hint.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        mv.addWidget(self.radio_prepared)
+        mv.addWidget(self.radio_original)
+        mv.addWidget(mode_hint)
+        mode_grp.setLayout(mv)
+
+        meas_grp = QGroupBox("Measurement setup")
+        mg = QGridLayout()
+        mg.setSpacing(8)
         self.op_spin = QSpinBox()
         self.op_spin.setRange(1, 10)
         self.op_spin.setValue(3)
-        self.keep_raw_chk = QCheckBox("Keep all columns (raw)")
         self.algo_combo = QComboBox()
         self.algo_combo.setPlaceholderText("Load a file to populate")
-
-        fg.addWidget(QLabel("Data File"), 0, 0)
-        fg.addWidget(self.file_edit, 0, 1, 1, 2)
-        fg.addWidget(browse_btn, 0, 3)
-        fg.addWidget(QLabel("Output Prefix"), 1, 0)
-        fg.addWidget(self.prefix_edit, 1, 1, 1, 2)
-        fg.addWidget(QLabel("Operators"), 2, 0)
-        fg.addWidget(self.op_spin, 2, 1)
-        fg.addWidget(self.keep_raw_chk, 2, 2)
-        fg.addWidget(QLabel("Measurement"), 3, 0)
-        fg.addWidget(self.algo_combo, 3, 1, 1, 2)
-        fg.setColumnStretch(1, 1)
-        file_grp.setLayout(fg)
-        main.addWidget(file_grp)
-
-        actions = QHBoxLayout()
-        actions.setSpacing(8)
+        mg.addWidget(QLabel("Operators"), 0, 0)
+        mg.addWidget(self.op_spin, 0, 1)
+        mg.addWidget(QLabel("Measurement"), 1, 0)
+        mg.addWidget(self.algo_combo, 1, 1)
+        mg.setColumnStretch(1, 1)
+        meas_grp.setLayout(mg)
 
         load_btn = _make_btn("Load File", "primary")
         load_btn.clicked.connect(self._load_file)
-        select_comp_btn = QPushButton("Select Components?")
+        load_row = QHBoxLayout()
+        load_row.addWidget(load_btn)
+
+        sel_grp = QGroupBox("Selection")
+        sv = QVBoxLayout()
+        sv.setSpacing(8)
+        r1 = QHBoxLayout()
+        select_comp_btn = QPushButton("Components…")
         select_comp_btn.clicked.connect(self._select_components_dialog)
-        select_algo_btn = QPushButton("Select Algorithms?")
+        select_algo_btn = QPushButton("Algorithms…")
         select_algo_btn.clicked.connect(self._select_algorithms_dialog)
+        r1.addWidget(select_comp_btn)
+        r1.addWidget(select_algo_btn)
+        disp_comp_btn = QPushButton("Display component list")
+        disp_comp_btn.clicked.connect(self._display_components)
+        sv.addLayout(r1)
+        sv.addWidget(disp_comp_btn)
+        sel_grp.setLayout(sv)
+
+        prev_grp = QGroupBox("Preview")
+        pv = QHBoxLayout()
         preview_btn = _make_btn("Preview", "primary")
         preview_btn.clicked.connect(self._preview)
-        preview_iqr_btn = QPushButton("Preview with IQR")
+        preview_iqr_btn = QPushButton("Preview + IQR")
         preview_iqr_btn.clicked.connect(self._preview_with_iqr)
-        disp_comp_btn = QPushButton("Display Components")
-        disp_comp_btn.clicked.connect(self._display_components)
-        save_btn = _make_btn("Save?", "success")
+        pv.addWidget(preview_btn)
+        pv.addWidget(preview_iqr_btn)
+        prev_grp.setLayout(pv)
+
+        exp_grp = QGroupBox("Export")
+        ev = QHBoxLayout()
+        save_btn = _make_btn("Save…", "success")
         save_btn.clicked.connect(self._save_dialog)
+        ev.addWidget(save_btn)
+        exp_grp.setLayout(ev)
 
-        actions.addWidget(load_btn)
-        actions.addWidget(_make_vsep())
-        actions.addWidget(select_comp_btn)
-        actions.addWidget(select_algo_btn)
-        actions.addWidget(_make_vsep())
-        actions.addWidget(preview_btn)
-        actions.addWidget(preview_iqr_btn)
-        actions.addWidget(disp_comp_btn)
-        actions.addStretch()
-        actions.addWidget(save_btn)
-        main.addLayout(actions)
+        left_l.addWidget(src_grp)
+        left_l.addWidget(mode_grp)
+        left_l.addWidget(meas_grp)
+        left_l.addLayout(load_row)
+        left_l.addWidget(sel_grp)
+        left_l.addWidget(prev_grp)
+        left_l.addWidget(exp_grp)
+        left_l.addStretch()
+        left_scroll.setWidget(left_panel)
 
-        self.status_lbl = _make_status_label("Ready ? load a file to begin")
-        main.addWidget(self.status_lbl)
-
+        right_w = QWidget()
+        right_l = QVBoxLayout(right_w)
+        right_l.setSpacing(8)
+        right_l.setContentsMargins(8, 0, 0, 0)
+        right_l.addWidget(_make_heading("Preview"))
+        self.status_lbl = _make_status_label("Ready — load a file to begin")
+        right_l.addWidget(self.status_lbl)
+        right_l.addWidget(_make_heading("Components"))
         self.comp_text = QTextEdit()
         self.comp_text.setReadOnly(True)
-        self.comp_text.setMaximumHeight(80)
+        self.comp_text.setMinimumHeight(120)
         self.comp_text.setPlaceholderText(
-            "Component names will appear here after clicking Display Components"
+            'Component names appear here after "Display component list".'
         )
-        main.addWidget(self.comp_text)
-
+        right_l.addWidget(self.comp_text)
         self.table = TablePanel()
-        main.addWidget(self.table, 1)
+        right_l.addWidget(self.table, 1)
 
-        self.setLayout(main)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(left_scroll)
+        splitter.addWidget(right_w)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([380, 980])
+        root.addWidget(splitter)
 
     def _browse(self) -> None:
         path = select_file(self, "Select Input File")
@@ -481,16 +555,17 @@ class ParseTabWidget(QWidget):
             path = self.file_edit.text().strip()
             if not path:
                 raise ValueError("No file selected")
-            df = load_and_clean_data(path, keep_all_columns=self.keep_raw_chk.isChecked())
+            preserve = self._preserve_source_columns()
+            df = load_and_clean_data(path, preserve_source_columns=preserve)
             self.df_base = df.reset_index(drop=True)
             meas_cols = get_measurement_columns(self.df_base)
             self.algo_combo.clear()
             self.algo_combo.addItems(meas_cols)
             self._set_status(
-                f"Loaded: {len(self.df_base)} rows, {len(self.df_base.columns)} cols ? "
+                f"Loaded: {len(self.df_base)} rows, {len(self.df_base.columns)} cols — "
                 f"{len(meas_cols)} numeric measurements"
             )
-            if self.keep_raw_chk.isChecked():
+            if preserve:
                 self.df_preview = self.df_base.copy()
             else:
                 self.df_preview = assign_operators_sequential(
@@ -498,7 +573,11 @@ class ParseTabWidget(QWidget):
                 )
             self._render(self.df_preview)
         except Exception as e:
+            self.df_base = None
+            self.df_preview = None
+            self._render(None)
             QMessageBox.critical(self, "Load Error", str(e))
+            self._set_status("Load failed — fix the file or mode and try again.")
 
     def _display_components(self) -> None:
         if self.df_base is None or "Comp_Name" not in self.df_base.columns:
@@ -521,7 +600,7 @@ class ParseTabWidget(QWidget):
             keep_cols += [c for c in self._selected_algorithms if c in df.columns]
             if keep_cols:
                 df = df[keep_cols]
-        if not self.keep_raw_chk.isChecked():
+        if not self._preserve_source_columns():
             df = assign_operators_sequential(df, n_operators=self.op_spin.value())
         return df
 
@@ -612,7 +691,7 @@ class ParseTabWidget(QWidget):
                 raise ValueError("No data after filters")
             self.df_preview = df
             self._render(self.df_preview)
-            self._set_status(f"Preview: {len(df)} rows ? {len(df.columns)} cols")
+            self._set_status(f"Preview: {len(df)} rows × {len(df.columns)} cols")
         except Exception as e:
             QMessageBox.critical(self, "Preview Error", str(e))
 
@@ -683,7 +762,7 @@ class ParseTabWidget(QWidget):
                 df_check = pd.read_csv(dst)
                 self._render(df_check)
                 self._set_status(
-                    f"Saved: {dst} | {len(df_check)} rows ? {len(df_check.columns)} cols"
+                    f"Saved: {dst} | {len(df_check)} rows × {len(df_check.columns)} cols"
                 )
                 QMessageBox.information(self, "Saved", f"Saved CSV to: {dst}")
             else:
@@ -698,7 +777,7 @@ class ParseTabWidget(QWidget):
                     return
                 self.df_preview.to_csv(dst, index=False, sep="\t")
                 self._set_status(
-                    f"Saved: {dst} | {len(self.df_preview)} rows ? {len(self.df_preview.columns)} cols"
+                    f"Saved: {dst} | {len(self.df_preview)} rows × {len(self.df_preview.columns)} cols"
                 )
                 QMessageBox.information(self, "Saved", f"Saved TXT to: {dst}")
         except Exception as e:

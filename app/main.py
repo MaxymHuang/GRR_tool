@@ -5,13 +5,12 @@ from typing import List
 import shutil
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QTabWidget, QFileDialog, QVBoxLayout,
+    QApplication, QMainWindow, QWidget, QStackedWidget, QFileDialog, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
     QTextEdit, QGridLayout, QGroupBox, QCheckBox, QTableWidget, QTableWidgetItem,
     QMessageBox, QScrollArea, QListWidget, QListWidgetItem, QSplitter, QDialog,
-    QDialogButtonBox, QSizePolicy, QFrame
+    QDialogButtonBox, QSizePolicy, QFrame, QRadioButton, QButtonGroup,
 )
 from PySide6.QtGui import QPixmap
 
@@ -45,31 +44,32 @@ QMainWindow, QWidget {
     font-size: 13px;
 }
 
-/* ===== Tab Widget ===== */
-QTabWidget::pane {
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    background-color: #1e1e2e;
-    top: -1px;
+/* ===== Nav sidebar ===== */
+QWidget#navSidebar {
+    background-color: #181825;
+    border: none;
+    border-right: 1px solid #45475a;
 }
-QTabBar::tab {
-    background-color: #313244;
+QListWidget#navSidebarList {
+    background-color: transparent;
+    border: none;
+    outline: none;
+    padding: 4px 0;
+}
+QListWidget#navSidebarList::item {
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin: 4px 4px;
     color: #a6adc8;
-    padding: 10px 28px;
-    margin-right: 2px;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
-    font-weight: 500;
-    font-size: 13px;
 }
-QTabBar::tab:selected {
-    background-color: #1e1e2e;
+QListWidget#navSidebarList::item:selected {
+    background-color: #313244;
     color: #cdd6f4;
-    border: 1px solid #45475a;
-    border-bottom: 2px solid #7c8aff;
+    border-left: 3px solid #7c8aff;
+    padding-left: 13px;
 }
-QTabBar::tab:hover:!selected {
-    background-color: #3b3b52;
+QListWidget#navSidebarList::item:hover:!selected {
+    background-color: #1e1e2e;
     color: #cdd6f4;
 }
 
@@ -183,6 +183,27 @@ QCheckBox::indicator:checked {
     border-color: #7c8aff;
 }
 QCheckBox::indicator:hover {
+    border-color: #7c8aff;
+}
+
+/* ===== Radio ===== */
+QRadioButton {
+    spacing: 8px;
+    color: #cdd6f4;
+    padding: 4px 0;
+}
+QRadioButton::indicator {
+    width: 18px;
+    height: 18px;
+    border-radius: 9px;
+    border: 1px solid #45475a;
+    background-color: #313244;
+}
+QRadioButton::indicator:checked {
+    background-color: #7c8aff;
+    border-color: #7c8aff;
+}
+QRadioButton::indicator:hover {
     border-color: #7c8aff;
 }
 
@@ -481,11 +502,20 @@ class AnovaTab(QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        main = QVBoxLayout()
-        main.setSpacing(10)
-        main.setContentsMargins(16, 12, 16, 12)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(0)
 
-        # -- File & Output card --
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setMinimumWidth(320)
+        left_scroll.setMaximumWidth(480)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_panel = QWidget()
+        left_l = QVBoxLayout(left_panel)
+        left_l.setSpacing(10)
+        left_l.setContentsMargins(0, 0, 8, 0)
+
         file_grp = QGroupBox("File && Output")
         fg = QGridLayout()
         fg.setSpacing(8)
@@ -500,12 +530,11 @@ class AnovaTab(QWidget):
         fg.addWidget(self.file_edit, 0, 1)
         fg.addWidget(browse_btn, 0, 2)
         fg.addWidget(QLabel("Output Prefix"), 1, 0)
-        fg.addWidget(self.prefix_edit, 1, 1)
-        fg.addWidget(self.merge_chk, 1, 2)
+        fg.addWidget(self.prefix_edit, 1, 1, 1, 2)
+        fg.addWidget(self.merge_chk, 2, 0, 1, 3)
         fg.setColumnStretch(1, 1)
         file_grp.setLayout(fg)
 
-        # -- Parameters card --
         param_grp = QGroupBox("Parameters")
         pg = QGridLayout()
         pg.setSpacing(8)
@@ -531,7 +560,6 @@ class AnovaTab(QWidget):
         pg.setColumnStretch(1, 1)
         param_grp.setLayout(pg)
 
-        # -- Filters card --
         filt_grp = QGroupBox("Filters")
         flg = QGridLayout()
         flg.setSpacing(8)
@@ -544,43 +572,42 @@ class AnovaTab(QWidget):
         flg.setColumnStretch(1, 1)
         filt_grp.setLayout(flg)
 
-        # Layout: file card full-width, params + filters side-by-side
-        cards = QHBoxLayout()
-        cards.setSpacing(10)
-        cards.addWidget(param_grp, 1)
-        cards.addWidget(filt_grp, 1)
-
-        main.addWidget(file_grp)
-        main.addLayout(cards)
-
-        # -- Action buttons --
-        actions = QHBoxLayout()
-        actions.setSpacing(10)
         load_btn = _make_btn("Load File", "primary")
         load_btn.clicked.connect(self._load_file)
         run_btn = _make_btn("Run ANOVA", "success")
         run_btn.clicked.connect(self._run)
-        actions.addStretch()
+        actions = QVBoxLayout()
+        actions.setSpacing(8)
         actions.addWidget(load_btn)
         actions.addWidget(run_btn)
-        actions.addStretch()
-        main.addLayout(actions)
 
-        # -- Results (scrollable) --
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+        left_l.addWidget(file_grp)
+        left_l.addWidget(param_grp)
+        left_l.addWidget(filt_grp)
+        left_l.addLayout(actions)
+        left_l.addStretch()
+        left_scroll.setWidget(left_panel)
+
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
         results = QWidget()
-        rl = QVBoxLayout()
+        rl = QVBoxLayout(results)
         rl.setSpacing(10)
-        rl.setContentsMargins(4, 8, 4, 4)
+        rl.setContentsMargins(4, 4, 4, 8)
+
+        charts_toolbar = QHBoxLayout()
+        charts_toolbar.addWidget(_make_heading("Charts"))
+        charts_toolbar.addStretch()
+        dl_btn = QPushButton("Download All Charts…")
+        dl_btn.clicked.connect(self._download_all)
+        charts_toolbar.addWidget(dl_btn)
 
         rl.addWidget(_make_heading("ANOVA Results"))
         self.anova_table = TablePanel()
         self.anova_table.setMinimumHeight(140)
         rl.addWidget(self.anova_table)
-
         rl.addWidget(_make_separator())
-        rl.addWidget(_make_heading("Charts"))
+        rl.addLayout(charts_toolbar)
 
         self.img_cov = ImagePanel("Components of Variation")
         self.img_alg = ImagePanel("Algorithm by Component")
@@ -597,14 +624,16 @@ class AnovaTab(QWidget):
         row2.addWidget(self.img_op)
         rl.addLayout(row2)
 
-        dl_btn = QPushButton("Download All Charts…")
-        dl_btn.clicked.connect(self._download_all)
-        rl.addWidget(dl_btn, alignment=Qt.AlignRight)
-
         results.setLayout(rl)
-        scroll.setWidget(results)
-        main.addWidget(scroll, 1)
-        self.setLayout(main)
+        right_scroll.setWidget(results)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(left_scroll)
+        splitter.addWidget(right_scroll)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([360, 1000])
+        root.addWidget(splitter)
 
     # -- Slots (logic unchanged) --
 
@@ -706,11 +735,20 @@ class Type1Tab(QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        main = QVBoxLayout()
-        main.setSpacing(10)
-        main.setContentsMargins(16, 12, 16, 12)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(0)
 
-        # -- File & Output card --
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setMinimumWidth(320)
+        left_scroll.setMaximumWidth(480)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_panel = QWidget()
+        left_l = QVBoxLayout(left_panel)
+        left_l.setSpacing(10)
+        left_l.setContentsMargins(0, 0, 8, 0)
+
         file_grp = QGroupBox("File && Output")
         fg = QGridLayout()
         fg.setSpacing(8)
@@ -725,12 +763,11 @@ class Type1Tab(QWidget):
         fg.addWidget(self.file_edit, 0, 1)
         fg.addWidget(browse_btn, 0, 2)
         fg.addWidget(QLabel("Output Prefix"), 1, 0)
-        fg.addWidget(self.prefix_edit, 1, 1)
-        fg.addWidget(self.merge_chk, 1, 2)
+        fg.addWidget(self.prefix_edit, 1, 1, 1, 2)
+        fg.addWidget(self.merge_chk, 2, 0, 1, 3)
         fg.setColumnStretch(1, 1)
         file_grp.setLayout(fg)
 
-        # -- Parameters card --
         param_grp = QGroupBox("Parameters")
         pg = QGridLayout()
         pg.setSpacing(8)
@@ -774,7 +811,6 @@ class Type1Tab(QWidget):
         pg.setColumnStretch(1, 1)
         param_grp.setLayout(pg)
 
-        # -- Filters card --
         filt_grp = QGroupBox("Filters")
         flg = QGridLayout()
         flg.setSpacing(8)
@@ -791,42 +827,42 @@ class Type1Tab(QWidget):
         flg.setColumnStretch(1, 1)
         filt_grp.setLayout(flg)
 
-        cards = QHBoxLayout()
-        cards.setSpacing(10)
-        cards.addWidget(param_grp, 2)
-        cards.addWidget(filt_grp, 1)
-
-        main.addWidget(file_grp)
-        main.addLayout(cards)
-
-        # -- Action buttons --
-        actions = QHBoxLayout()
-        actions.setSpacing(10)
         load_btn = _make_btn("Load File", "primary")
         load_btn.clicked.connect(self._load_file)
         run_btn = _make_btn("Run Type 1", "success")
         run_btn.clicked.connect(self._run)
-        actions.addStretch()
+        actions = QVBoxLayout()
+        actions.setSpacing(8)
         actions.addWidget(load_btn)
         actions.addWidget(run_btn)
-        actions.addStretch()
-        main.addLayout(actions)
 
-        # -- Results (scrollable) --
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+        left_l.addWidget(file_grp)
+        left_l.addWidget(param_grp)
+        left_l.addWidget(filt_grp)
+        left_l.addLayout(actions)
+        left_l.addStretch()
+        left_scroll.setWidget(left_panel)
+
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
         results = QWidget()
-        rl = QVBoxLayout()
+        rl = QVBoxLayout(results)
         rl.setSpacing(10)
-        rl.setContentsMargins(4, 8, 4, 4)
+        rl.setContentsMargins(4, 4, 4, 8)
+
+        charts_toolbar = QHBoxLayout()
+        charts_toolbar.addWidget(_make_heading("Charts"))
+        charts_toolbar.addStretch()
+        dl_btn = QPushButton("Download All Charts…")
+        dl_btn.clicked.connect(self._download_all)
+        charts_toolbar.addWidget(dl_btn)
 
         rl.addWidget(_make_heading("Type 1 Summary"))
         self.summary_table = TablePanel()
         self.summary_table.setMinimumHeight(140)
         rl.addWidget(self.summary_table)
-
         rl.addWidget(_make_separator())
-        rl.addWidget(_make_heading("Charts"))
+        rl.addLayout(charts_toolbar)
 
         self.img_dist = ImagePanel("Distribution vs Tolerance")
         self.img_ind = ImagePanel("Individuals Chart")
@@ -842,14 +878,16 @@ class Type1Tab(QWidget):
         row2.addStretch(1)
         rl.addLayout(row2)
 
-        dl_btn = QPushButton("Download All Charts…")
-        dl_btn.clicked.connect(self._download_all)
-        rl.addWidget(dl_btn, alignment=Qt.AlignRight)
-
         results.setLayout(rl)
-        scroll.setWidget(results)
-        main.addWidget(scroll, 1)
-        self.setLayout(main)
+        right_scroll.setWidget(results)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(left_scroll)
+        splitter.addWidget(right_scroll)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([360, 1000])
+        root.addWidget(splitter)
 
     # -- Slots (logic unchanged) --
 
@@ -961,89 +999,165 @@ class ParseTab(QWidget):
         self._selected_algorithms = []
         self._init_ui()
 
-    def _init_ui(self):
-        main = QVBoxLayout()
-        main.setSpacing(10)
-        main.setContentsMargins(16, 12, 16, 12)
+    def _preserve_source_columns(self) -> bool:
+        return self.radio_original.isChecked()
 
-        # -- File & Settings card --
-        file_grp = QGroupBox("File && Settings")
-        fg = QGridLayout()
-        fg.setSpacing(8)
+    def _on_mode_changed(self):
+        prepared = self.radio_prepared.isChecked()
+        self.op_spin.setEnabled(prepared)
+        self.op_spin.setToolTip(
+            ""
+            if prepared
+            else "Not used in original-columns mode (no Operator / Part columns are added)."
+        )
+        # Do not load from disk here — only "Load File" should read the file.
+        if self.df_base is not None:
+            self.df_base = None
+            self.df_preview = None
+            self.algo_combo.clear()
+            self.comp_text.clear()
+            self._render(None)
+            self._set_status("Loading mode changed — click Load File to reload data.")
+
+    def _init_ui(self):
+        root = QHBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(0)
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setMinimumWidth(340)
+        left_scroll.setMaximumWidth(440)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_panel = QWidget()
+        left_l = QVBoxLayout(left_panel)
+        left_l.setSpacing(10)
+        left_l.setContentsMargins(0, 0, 8, 0)
+
+        src_grp = QGroupBox("Data source")
+        sg = QGridLayout()
+        sg.setSpacing(8)
         self.file_edit = QLineEdit()
         self.file_edit.setPlaceholderText("Select a data file (.txt or .csv)")
         browse_btn = QPushButton("Browse…")
         browse_btn.clicked.connect(self._browse)
         self.prefix_edit = QLineEdit()
         self.prefix_edit.setPlaceholderText("Optional output filename prefix")
+        sg.addWidget(QLabel("Data File"), 0, 0)
+        sg.addWidget(self.file_edit, 0, 1)
+        sg.addWidget(browse_btn, 0, 2)
+        sg.addWidget(QLabel("Output Prefix"), 1, 0)
+        sg.addWidget(self.prefix_edit, 1, 1, 1, 2)
+        sg.setColumnStretch(1, 1)
+        src_grp.setLayout(sg)
+
+        mode_grp = QGroupBox("Loading mode")
+        mv = QVBoxLayout()
+        mv.setSpacing(6)
+        self.radio_prepared = QRadioButton("Prepared for Gage R&R")
+        self.radio_original = QRadioButton("Original columns only (no derived columns)")
+        self.radio_prepared.setChecked(True)
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.addButton(self.radio_prepared, 0)
+        self.mode_group.addButton(self.radio_original, 1)
+        self.mode_group.buttonClicked.connect(lambda _: self._on_mode_changed())
+        mode_hint = QLabel(
+            "Prepared: drop auxiliary fields, add Component, and you can assign operators for export. "
+            "Original: keep file columns; no Component, Operator, or Part columns."
+        )
+        mode_hint.setWordWrap(True)
+        mode_hint.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        mv.addWidget(self.radio_prepared)
+        mv.addWidget(self.radio_original)
+        mv.addWidget(mode_hint)
+        mode_grp.setLayout(mv)
+
+        meas_grp = QGroupBox("Measurement setup")
+        mg = QGridLayout()
+        mg.setSpacing(8)
         self.op_spin = QSpinBox()
         self.op_spin.setRange(1, 10)
         self.op_spin.setValue(3)
-        self.keep_raw_chk = QCheckBox("Keep all columns (raw)")
         self.algo_combo = QComboBox()
         self.algo_combo.setPlaceholderText("Load a file to populate")
-
-        fg.addWidget(QLabel("Data File"), 0, 0)
-        fg.addWidget(self.file_edit, 0, 1, 1, 2)
-        fg.addWidget(browse_btn, 0, 3)
-        fg.addWidget(QLabel("Output Prefix"), 1, 0)
-        fg.addWidget(self.prefix_edit, 1, 1, 1, 2)
-        fg.addWidget(QLabel("Operators"), 2, 0)
-        fg.addWidget(self.op_spin, 2, 1)
-        fg.addWidget(self.keep_raw_chk, 2, 2)
-        fg.addWidget(QLabel("Measurement"), 3, 0)
-        fg.addWidget(self.algo_combo, 3, 1, 1, 2)
-        fg.setColumnStretch(1, 1)
-        file_grp.setLayout(fg)
-        main.addWidget(file_grp)
-
-        # -- Action buttons in two groups --
-        actions = QHBoxLayout()
-        actions.setSpacing(8)
+        mg.addWidget(QLabel("Operators"), 0, 0)
+        mg.addWidget(self.op_spin, 0, 1)
+        mg.addWidget(QLabel("Measurement"), 1, 0)
+        mg.addWidget(self.algo_combo, 1, 1)
+        mg.setColumnStretch(1, 1)
+        meas_grp.setLayout(mg)
 
         load_btn = _make_btn("Load File", "primary")
         load_btn.clicked.connect(self._load_file)
-        select_comp_btn = QPushButton("Select Components…")
+        load_row = QHBoxLayout()
+        load_row.addWidget(load_btn)
+
+        sel_grp = QGroupBox("Selection")
+        sv = QVBoxLayout()
+        sv.setSpacing(8)
+        r1 = QHBoxLayout()
+        select_comp_btn = QPushButton("Components…")
         select_comp_btn.clicked.connect(self._select_components_dialog)
-        select_algo_btn = QPushButton("Select Algorithms…")
+        select_algo_btn = QPushButton("Algorithms…")
         select_algo_btn.clicked.connect(self._select_algorithms_dialog)
+        r1.addWidget(select_comp_btn)
+        r1.addWidget(select_algo_btn)
+        disp_comp_btn = QPushButton("Display component list")
+        disp_comp_btn.clicked.connect(self._display_components)
+        sv.addLayout(r1)
+        sv.addWidget(disp_comp_btn)
+        sel_grp.setLayout(sv)
+
+        prev_grp = QGroupBox("Preview")
+        pv = QHBoxLayout()
         preview_btn = _make_btn("Preview", "primary")
         preview_btn.clicked.connect(self._preview)
-        preview_iqr_btn = QPushButton("Preview with IQR")
+        preview_iqr_btn = QPushButton("Preview + IQR")
         preview_iqr_btn.clicked.connect(self._preview_with_iqr)
-        disp_comp_btn = QPushButton("Display Components")
-        disp_comp_btn.clicked.connect(self._display_components)
+        pv.addWidget(preview_btn)
+        pv.addWidget(preview_iqr_btn)
+        prev_grp.setLayout(pv)
+
+        exp_grp = QGroupBox("Export")
+        ev = QHBoxLayout()
         save_btn = _make_btn("Save…", "success")
         save_btn.clicked.connect(self._save_dialog)
+        ev.addWidget(save_btn)
+        exp_grp.setLayout(ev)
 
-        actions.addWidget(load_btn)
-        actions.addWidget(_make_vsep())
-        actions.addWidget(select_comp_btn)
-        actions.addWidget(select_algo_btn)
-        actions.addWidget(_make_vsep())
-        actions.addWidget(preview_btn)
-        actions.addWidget(preview_iqr_btn)
-        actions.addWidget(disp_comp_btn)
-        actions.addStretch()
-        actions.addWidget(save_btn)
-        main.addLayout(actions)
+        left_l.addWidget(src_grp)
+        left_l.addWidget(mode_grp)
+        left_l.addWidget(meas_grp)
+        left_l.addLayout(load_row)
+        left_l.addWidget(sel_grp)
+        left_l.addWidget(prev_grp)
+        left_l.addWidget(exp_grp)
+        left_l.addStretch()
+        left_scroll.setWidget(left_panel)
 
-        # -- Status --
+        right_w = QWidget()
+        right_l = QVBoxLayout(right_w)
+        right_l.setSpacing(8)
+        right_l.setContentsMargins(8, 0, 0, 0)
+        right_l.addWidget(_make_heading("Preview"))
         self.status_lbl = _make_status_label("Ready — load a file to begin")
-        main.addWidget(self.status_lbl)
-
-        # -- Components preview --
+        right_l.addWidget(self.status_lbl)
+        right_l.addWidget(_make_heading("Components"))
         self.comp_text = QTextEdit()
         self.comp_text.setReadOnly(True)
-        self.comp_text.setMaximumHeight(80)
-        self.comp_text.setPlaceholderText("Component names will appear here after clicking Display Components")
-        main.addWidget(self.comp_text)
-
-        # -- Data table --
+        self.comp_text.setMinimumHeight(120)
+        self.comp_text.setPlaceholderText("Component names appear here after “Display component list”.")
+        right_l.addWidget(self.comp_text)
         self.table = TablePanel()
-        main.addWidget(self.table, 1)
+        right_l.addWidget(self.table, 1)
 
-        self.setLayout(main)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(left_scroll)
+        splitter.addWidget(right_w)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([380, 980])
+        root.addWidget(splitter)
 
     # -- Slots --
 
@@ -1057,19 +1171,29 @@ class ParseTab(QWidget):
             path = self.file_edit.text().strip()
             if not path:
                 raise ValueError("No file selected")
-            df = load_and_clean_data(path, keep_all_columns=self.keep_raw_chk.isChecked())
+            preserve = self._preserve_source_columns()
+            df = load_and_clean_data(path, preserve_source_columns=preserve)
             self.df_base = df.reset_index(drop=True)
             meas_cols = get_measurement_columns(self.df_base)
             self.algo_combo.clear()
             self.algo_combo.addItems(meas_cols)
-            self._set_status(f"Loaded: {len(self.df_base)} rows, {len(self.df_base.columns)} cols — {len(meas_cols)} numeric measurements")
-            if self.keep_raw_chk.isChecked():
+            self._set_status(
+                f"Loaded: {len(self.df_base)} rows, {len(self.df_base.columns)} cols — "
+                f"{len(meas_cols)} numeric measurements"
+            )
+            if preserve:
                 self.df_preview = self.df_base.copy()
             else:
-                self.df_preview = assign_operators_sequential(self.df_base.copy(), n_operators=self.op_spin.value())
+                self.df_preview = assign_operators_sequential(
+                    self.df_base.copy(), n_operators=self.op_spin.value()
+                )
             self._render(self.df_preview)
         except Exception as e:
+            self.df_base = None
+            self.df_preview = None
+            self._render(None)
             QMessageBox.critical(self, "Load Error", str(e))
+            self._set_status("Load failed — fix the file or mode and try again.")
 
     def _display_components(self):
         if self.df_base is None or 'Comp_Name' not in self.df_base.columns:
@@ -1090,7 +1214,7 @@ class ParseTab(QWidget):
             keep_cols += [c for c in self._selected_algorithms if c in df.columns]
             if keep_cols:
                 df = df[keep_cols]
-        if not self.keep_raw_chk.isChecked():
+        if not self._preserve_source_columns():
             df = assign_operators_sequential(df, n_operators=self.op_spin.value())
         return df
 
@@ -1243,14 +1367,6 @@ class ParseTab(QWidget):
         self.status_lbl.setText(msg)
 
 
-def _make_vsep() -> QFrame:
-    sep = QFrame()
-    sep.setFrameShape(QFrame.VLine)
-    sep.setStyleSheet("color: #45475a;")
-    sep.setFixedWidth(2)
-    return sep
-
-
 # ---------------------------------------------------------------------------
 # Main Window
 # ---------------------------------------------------------------------------
@@ -1261,11 +1377,36 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Gage R&R Desktop")
         self.resize(1400, 900)
 
-        tabs = QTabWidget()
-        tabs.addTab(AnovaTab(), "  ANOVA  ")
-        tabs.addTab(Type1Tab(), "  Type 1 Gage  ")
-        tabs.addTab(ParseTab(), "  Parsing  ")
-        self.setCentralWidget(tabs)
+        shell = QWidget()
+        shell_l = QHBoxLayout(shell)
+        shell_l.setContentsMargins(0, 0, 0, 0)
+        shell_l.setSpacing(0)
+
+        nav_col = QWidget()
+        nav_col.setFixedWidth(220)
+        nav_col.setObjectName("navSidebar")
+        nav_l = QVBoxLayout(nav_col)
+        nav_l.setContentsMargins(12, 16, 8, 12)
+        nav_l.setSpacing(8)
+        nav_title = QLabel("Workflow")
+        nav_title.setStyleSheet("color: #7c8aff; font-weight: 700; font-size: 11px; letter-spacing: 0.08em;")
+        nav_l.addWidget(nav_title)
+        nav = QListWidget()
+        nav.setObjectName("navSidebarList")
+        for text in ("ANOVA", "Type 1 Gage", "Parsing"):
+            QListWidgetItem(text, nav)
+        nav.setCurrentRow(0)
+        nav_l.addWidget(nav, 1)
+
+        stack = QStackedWidget()
+        stack.addWidget(AnovaTab())
+        stack.addWidget(Type1Tab())
+        stack.addWidget(ParseTab())
+        nav.currentRowChanged.connect(stack.setCurrentIndex)
+
+        shell_l.addWidget(nav_col)
+        shell_l.addWidget(stack, 1)
+        self.setCentralWidget(shell)
 
 
 def main():

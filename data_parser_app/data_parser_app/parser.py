@@ -16,7 +16,7 @@ import pandas as pd
 warnings.filterwarnings('ignore')
 
 
-def load_and_clean_data(file_path: str, keep_all_columns: bool = False) -> pd.DataFrame:
+def load_and_clean_data(file_path: str, preserve_source_columns: bool = False) -> pd.DataFrame:
     """
     Load and clean the measurement data file.
 
@@ -24,9 +24,12 @@ def load_and_clean_data(file_path: str, keep_all_columns: bool = False) -> pd.Da
 
     Args:
         file_path: Path to the input data file
+        preserve_source_columns: If True, keep source columns only (no auxiliary drops,
+            no empty-column removal, no derived ``Component`` column). If False, apply
+            the full preparation pipeline for Gage R&R analysis.
 
     Returns:
-        Cleaned DataFrame with standardized column names
+        DataFrame after loading and the selected cleaning path.
     """
     print(f"Loading data from {file_path}...")
 
@@ -73,8 +76,8 @@ def load_and_clean_data(file_path: str, keep_all_columns: bool = False) -> pd.Da
         df = pd.DataFrame(all_data_rows)
         print(f"Initial data shape: {df.shape}")
 
-    # Optionally keep all original columns without dropping anything
-    if not keep_all_columns:
+    # Prepared mode: drop auxiliary columns; preserve mode keeps file schema
+    if not preserve_source_columns:
         # Remove specified columns if present
         columns_to_remove = [
             'Subtype_NO', 'BoardIn_NO', 'Scan_NO',
@@ -86,7 +89,7 @@ def load_and_clean_data(file_path: str, keep_all_columns: bool = False) -> pd.Da
 
     # Normalize empties and optionally drop all-empty columns
     df = df.replace('', np.nan)
-    if not keep_all_columns:
+    if not preserve_source_columns:
         df = df.dropna(axis=1, how='all')
 
     # Convert numeric columns (all except Comp_Name)
@@ -99,15 +102,15 @@ def load_and_clean_data(file_path: str, keep_all_columns: bool = False) -> pd.Da
     if numeric_cols:
         df = df.dropna(subset=numeric_cols, how='all')
 
-    # For CSVs produced by our parser, Comp_Name should exist; if not, try fallbacks (skip in raw mode)
-    if not keep_all_columns:
+    # For CSVs produced by our parser, Comp_Name should exist; if not, try fallbacks (prepared mode only)
+    if not preserve_source_columns:
         if 'Comp_Name' not in df.columns:
             candidate_cols = [c for c in df.columns if c.lower() in ['comp_name', 'component']]
             if candidate_cols:
                 df['Comp_Name'] = df[candidate_cols[0]]
 
-    # Keep valid Comp_Name; set Component as Comp_Name or Comp_Name_Box when Box present (skip in raw mode)
-    if not keep_all_columns:
+    # Keep valid Comp_Name; set Component as Comp_Name or Comp_Name_Box when Box present (prepared mode only)
+    if not preserve_source_columns:
         if 'Comp_Name' in df.columns:
             df = df[df['Comp_Name'].notna() & (df['Comp_Name'] != '')]
             df['Comp_Name'] = df['Comp_Name'].astype(str).str.strip()
