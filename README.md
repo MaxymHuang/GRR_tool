@@ -27,6 +27,20 @@ uv pip install -r requirements.txt
 pip install -r requirements.txt
 ```
 
+### Standalone data parser app (forked copy)
+
+The directory [`data_parser_app/`](data_parser_app/) is a separate runnable project that duplicates the logic in the repository root [`data_parser.py`](data_parser.py). GRRTool and the analysis scripts continue to use the root module; the standalone app only needs NumPy and pandas. **If you change parsing behavior, update both copies** unless you merge them later.
+
+From the `data_parser_app` folder:
+
+```bash
+cd data_parser_app
+uv sync
+uv run python -m data_parser_app -f /path/to/data.txt -o parsed.csv
+```
+
+Use `--include`, `--exclude`, `--operator`, and `-o` / `--output` as with `python data_parser.py` at the repository root.
+
 ## Windows Executable Build
 
 - Install PyInstaller inside the project environment: `uv pip install pyinstaller`
