@@ -29,17 +29,20 @@ pip install -r requirements.txt
 
 ### Standalone data parser app (forked copy)
 
-The directory [`data_parser_app/`](data_parser_app/) is a separate runnable project that duplicates the logic in the repository root [`data_parser.py`](data_parser.py). GRRTool and the analysis scripts continue to use the root module; the standalone app only needs NumPy and pandas. **If you change parsing behavior, update both copies** unless you merge them later.
+The directory [`data_parser_app/`](data_parser_app/) is a separate runnable project that duplicates the logic in the repository root [`data_parser.py`](data_parser.py). GRRTool and the analysis scripts continue to use the root module; the standalone app uses NumPy, pandas, and PySide6 for the UI. **If you change parsing behavior, update both copies** unless you merge them later.
 
 From the `data_parser_app` folder:
 
 ```bash
 cd data_parser_app
 uv sync
+# Graphical UI (Parse workflow: load, filter, preview, save)
+uv run python -m data_parser_app
+# CLI batch mode (same flags as root data_parser.py)
 uv run python -m data_parser_app -f /path/to/data.txt -o parsed.csv
 ```
 
-Use `--include`, `--exclude`, `--operator`, and `-o` / `--output` as with `python data_parser.py` at the repository root.
+Use `--include`, `--exclude`, `--operator`, and `-o` / `--output` for CLI mode, as with `python data_parser.py` at the repository root. Omit `-f` to open the GUI.
 
 ## Windows Executable Build
 

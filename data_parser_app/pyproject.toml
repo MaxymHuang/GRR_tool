@@ -1,11 +1,12 @@
 [project]
 name = "data-parser-app"
 version = "0.1.0"
-description = "Standalone CLI to parse and prepare Gage R&R measurement data (forked from grr-tool)"
+description = "Standalone data parser with GUI and CLI (forked from grr-tool)"
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.3.4",
     "pandas>=2.3.3",
+    "pyside6>=6.10.0",
 ]
 
 [build-system]
