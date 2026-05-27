@@ -1,8 +1,11 @@
+import json
 import os
 import sys
 import tempfile
-from typing import List
+from typing import Any, Dict, List, Optional
 import shutil
+
+import numpy as np
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -10,9 +13,42 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
     QTextEdit, QGridLayout, QGroupBox, QCheckBox, QTableWidget, QTableWidgetItem,
     QMessageBox, QScrollArea, QListWidget, QListWidgetItem, QSplitter, QDialog,
-    QDialogButtonBox, QSizePolicy, QFrame, QRadioButton, QButtonGroup,
+    QDialogButtonBox, QFrame, QRadioButton, QButtonGroup, QStatusBar, QStyleFactory,
 )
 from PySide6.QtGui import QPixmap
+
+try:
+    from app.theme import (
+        STYLESHEET,
+        VERDICT_DISPLAY,
+        AppHeader,
+        PageHeader,
+        StickyActionBar,
+        make_btn,
+        make_field_label,
+        make_heading,
+        make_hint_label,
+        make_separator,
+        make_status_label,
+        polish_widget,
+        verdict_badge_style,
+    )
+except ImportError:
+    from theme import (
+        STYLESHEET,
+        VERDICT_DISPLAY,
+        AppHeader,
+        PageHeader,
+        StickyActionBar,
+        make_btn,
+        make_field_label,
+        make_heading,
+        make_hint_label,
+        make_separator,
+        make_status_label,
+        polish_widget,
+        verdict_badge_style,
+    )
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT_DIR not in sys.path:
@@ -25,324 +61,35 @@ from data_parser import (
     remove_outliers_iqr_series,
     get_measurement_columns,
     get_components_preview,
-    assign_operators_sequential
+    apply_study_design,
 )
 
-from gage_rr_analysis import perform_anova_grr, create_anova_table
-from gage_rr_analysis import plot_components_of_variation, plot_algorithm_by_component, plot_s_chart_by_operator, plot_algo_by_operator, plot_merged_charts
+from grr_tool.msa import (
+    perform_anova_grr,
+    create_anova_table,
+    create_variance_summary_df,
+    DesignMode,
+)
+from grr_tool.msa.gage_rr import ReproMode
+from grr_tool.msa.xbar_r import perform_xbar_r
+from grr_tool.msa.nested import perform_nested_grr
+from grr_tool.msa.acceptance import build_gage_rr_acceptance
+from gage_rr_analysis import (
+    plot_components_of_variation,
+    plot_algorithm_by_component,
+    plot_s_chart_by_operator,
+    plot_algo_by_operator,
+    plot_merged_charts,
+)
 
-from gage_rr_type1 import compute_type1_metrics, create_type1_summary_df
-from gage_rr_type1 import plot_distribution_vs_tolerance, plot_individuals_chart, plot_moving_range_chart, plot_merged
-
-
-STYLESHEET = """
-/* ===== Base ===== */
-QMainWindow, QWidget {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-    font-family: 'Segoe UI', 'Arial', sans-serif;
-    font-size: 13px;
-}
-
-/* ===== Nav sidebar ===== */
-QWidget#navSidebar {
-    background-color: #181825;
-    border: none;
-    border-right: 1px solid #45475a;
-}
-QListWidget#navSidebarList {
-    background-color: transparent;
-    border: none;
-    outline: none;
-    padding: 4px 0;
-}
-QListWidget#navSidebarList::item {
-    padding: 12px 16px;
-    border-radius: 8px;
-    margin: 4px 4px;
-    color: #a6adc8;
-}
-QListWidget#navSidebarList::item:selected {
-    background-color: #313244;
-    color: #cdd6f4;
-    border-left: 3px solid #7c8aff;
-    padding-left: 13px;
-}
-QListWidget#navSidebarList::item:hover:!selected {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-}
-
-/* ===== Group Box (Cards) ===== */
-QGroupBox {
-    background-color: #2a2a3c;
-    border: 1px solid #45475a;
-    border-radius: 8px;
-    margin-top: 16px;
-    padding: 18px 14px 14px 14px;
-    font-weight: 600;
-    font-size: 13px;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    subcontrol-position: top left;
-    padding: 2px 12px;
-    color: #7c8aff;
-    font-size: 13px;
-}
-
-/* ===== Inputs ===== */
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
-    background-color: #313244;
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    padding: 6px 10px;
-    color: #cdd6f4;
-    min-height: 22px;
-}
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
-    border: 1px solid #7c8aff;
-}
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {
-    background-color: #252536;
-    color: #585b70;
-}
-QComboBox::drop-down {
-    border: none;
-    padding-right: 8px;
-}
-QComboBox QAbstractItemView {
-    background-color: #313244;
-    border: 1px solid #45475a;
-    color: #cdd6f4;
-    selection-background-color: #7c8aff;
-    selection-color: #1e1e2e;
-}
-
-/* ===== Buttons ===== */
-QPushButton {
-    background-color: #313244;
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    padding: 8px 20px;
-    color: #cdd6f4;
-    font-weight: 500;
-    min-height: 18px;
-}
-QPushButton:hover {
-    background-color: #3b3b52;
-    border-color: #585b70;
-}
-QPushButton:pressed {
-    background-color: #45475a;
-}
-QPushButton:disabled {
-    background-color: #252536;
-    color: #45475a;
-    border-color: #3b3b52;
-}
-QPushButton[cssClass="primary"] {
-    background-color: #7c8aff;
-    color: #1e1e2e;
-    border: none;
-    font-weight: 600;
-}
-QPushButton[cssClass="primary"]:hover {
-    background-color: #9099ff;
-}
-QPushButton[cssClass="primary"]:pressed {
-    background-color: #6c7aef;
-}
-QPushButton[cssClass="success"] {
-    background-color: #a6e3a1;
-    color: #1e1e2e;
-    border: none;
-    font-weight: 600;
-}
-QPushButton[cssClass="success"]:hover {
-    background-color: #b6f3b1;
-}
-QPushButton[cssClass="success"]:pressed {
-    background-color: #96d391;
-}
-
-/* ===== Checkbox ===== */
-QCheckBox {
-    spacing: 8px;
-    color: #cdd6f4;
-}
-QCheckBox::indicator {
-    width: 18px;
-    height: 18px;
-    border-radius: 4px;
-    border: 1px solid #45475a;
-    background-color: #313244;
-}
-QCheckBox::indicator:checked {
-    background-color: #7c8aff;
-    border-color: #7c8aff;
-}
-QCheckBox::indicator:hover {
-    border-color: #7c8aff;
-}
-
-/* ===== Radio ===== */
-QRadioButton {
-    spacing: 8px;
-    color: #cdd6f4;
-    padding: 4px 0;
-}
-QRadioButton::indicator {
-    width: 18px;
-    height: 18px;
-    border-radius: 9px;
-    border: 1px solid #45475a;
-    background-color: #313244;
-}
-QRadioButton::indicator:checked {
-    background-color: #7c8aff;
-    border-color: #7c8aff;
-}
-QRadioButton::indicator:hover {
-    border-color: #7c8aff;
-}
-
-/* ===== Tables ===== */
-QTableWidget {
-    background-color: #2a2a3c;
-    alternate-background-color: #313244;
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    gridline-color: #3b3b52;
-    color: #cdd6f4;
-    selection-background-color: #45475a;
-    selection-color: #cdd6f4;
-}
-QTableWidget::item {
-    padding: 4px 8px;
-}
-QHeaderView::section {
-    background-color: #313244;
-    color: #7c8aff;
-    padding: 8px;
-    border: none;
-    border-bottom: 2px solid #45475a;
-    font-weight: 600;
-    font-size: 12px;
-}
-
-/* ===== Scroll ===== */
-QScrollArea {
-    border: none;
-    background-color: transparent;
-}
-QScrollBar:vertical {
-    background-color: #1e1e2e;
-    width: 10px;
-    border-radius: 5px;
-}
-QScrollBar::handle:vertical {
-    background-color: #45475a;
-    border-radius: 5px;
-    min-height: 30px;
-}
-QScrollBar::handle:vertical:hover {
-    background-color: #585b70;
-}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-    height: 0; background: none;
-}
-QScrollBar:horizontal {
-    background-color: #1e1e2e;
-    height: 10px;
-    border-radius: 5px;
-}
-QScrollBar::handle:horizontal {
-    background-color: #45475a;
-    border-radius: 5px;
-    min-width: 30px;
-}
-QScrollBar::handle:horizontal:hover {
-    background-color: #585b70;
-}
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
-QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
-    width: 0; background: none;
-}
-
-/* ===== Text Edit ===== */
-QTextEdit {
-    background-color: #313244;
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    padding: 8px;
-    color: #cdd6f4;
-    font-family: 'Consolas', 'Courier New', monospace;
-    font-size: 12px;
-}
-
-/* ===== Labels ===== */
-QLabel {
-    color: #bac2de;
-    background-color: transparent;
-}
-QLabel[cssClass="heading"] {
-    font-size: 15px;
-    font-weight: 700;
-    color: #cdd6f4;
-    padding: 4px 0;
-}
-QLabel[cssClass="status"] {
-    background-color: #313244;
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    padding: 8px 12px;
-    color: #a6adc8;
-    font-size: 12px;
-}
-
-/* ===== List Widget ===== */
-QListWidget {
-    background-color: #313244;
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    color: #cdd6f4;
-    outline: none;
-}
-QListWidget::item {
-    padding: 6px 10px;
-    border-radius: 4px;
-}
-QListWidget::item:hover {
-    background-color: #3b3b52;
-}
-
-/* ===== Dialog ===== */
-QDialog {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-}
-QMessageBox {
-    background-color: #1e1e2e;
-}
-QMessageBox QLabel {
-    color: #cdd6f4;
-}
-
-/* ===== Separator ===== */
-QFrame[cssClass="separator"] {
-    background-color: #45475a;
-    max-height: 1px;
-    margin: 4px 0;
-}
-
-/* ===== Splitter ===== */
-QSplitter::handle {
-    background-color: #45475a;
-    width: 2px;
-}
-"""
+from grr_tool.msa.type1 import compute_type1_metrics
+from grr_tool.msa.tables import create_type1_summary_df
+from gage_rr_type1 import (
+    plot_distribution_vs_tolerance,
+    plot_individuals_chart,
+    plot_moving_range_chart,
+    plot_merged,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -364,74 +111,64 @@ def to_list_from_tokens(tokens: List[str]) -> List[str]:
     return out
 
 
-def _make_btn(text: str, css_class: str = "") -> QPushButton:
-    btn = QPushButton(text)
-    if css_class:
-        btn.setProperty("cssClass", css_class)
-    return btn
+def set_global_status(widget: QWidget, msg: str) -> None:
+    win = widget.window()
+    if isinstance(win, MainWindow):
+        win.set_status(msg)
 
 
-def _make_heading(text: str) -> QLabel:
-    lbl = QLabel(text)
-    lbl.setProperty("cssClass", "heading")
-    return lbl
+def _add_form_row(grid: QGridLayout, row: int, label: str, widget: QWidget) -> int:
+    grid.addWidget(make_field_label(label), row, 0)
+    grid.addWidget(widget, row, 1)
+    return row + 1
 
 
-def _make_status_label(text: str = "") -> QLabel:
-    lbl = QLabel(text)
-    lbl.setProperty("cssClass", "status")
-    return lbl
-
-
-def _make_separator() -> QFrame:
-    line = QFrame()
-    line.setFrameShape(QFrame.HLine)
-    line.setProperty("cssClass", "separator")
-    line.setFixedHeight(1)
-    return line
+def _style_selection_dialog(dlg: QDialog, layout: Optional[QVBoxLayout] = None) -> None:
+    dlg.setMinimumWidth(400)
+    if layout is not None:
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
 
 
 # ---------------------------------------------------------------------------
 # Image Panel
 # ---------------------------------------------------------------------------
 
-class ImagePanel(QWidget):
+class ImagePanel(QFrame):
     def __init__(self, title: str):
         super().__init__()
+        self.setObjectName("chartCard")
         self.current_path = ""
-        layout = QVBoxLayout()
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(6)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
 
+        header = QHBoxLayout()
         self.title_label = QLabel(title)
-        self.title_label.setAlignment(Qt.AlignCenter)
-        self.title_label.setStyleSheet(
-            "font-weight: 600; color: #cdd6f4; font-size: 12px; padding: 4px;"
-        )
-
-        self.image = QLabel()
-        self.image.setAlignment(Qt.AlignCenter)
-        self.image.setStyleSheet(
-            "background-color: #313244; border: 1px solid #45475a; "
-            "border-radius: 6px; padding: 8px; color: #585b70;"
-        )
-        self.image.setMinimumHeight(200)
-        self.image.setText("No chart generated")
-
-        self.save_btn = QPushButton("Save Chart…")
+        self.title_label.setObjectName("chartCardTitle")
+        self.save_btn = make_btn("Save…", "compact")
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self._save_image)
+        header.addWidget(self.title_label)
+        header.addStretch()
+        header.addWidget(self.save_btn)
 
-        layout.addWidget(self.title_label)
+        self.image = QLabel()
+        self.image.setObjectName("chartImageArea")
+        self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image.setMinimumHeight(200)
+        self.image.setText("Chart will appear after analysis")
+
+        layout.addLayout(header)
         layout.addWidget(self.image, 1)
-        layout.addWidget(self.save_btn)
-        self.setLayout(layout)
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(340)
 
     def set_image(self, path: str):
         self.current_path = path if path and os.path.exists(path) else ""
         if not self.current_path:
-            self.image.setText("No chart generated" if not path else f"Missing: {path}")
+            self.image.setText(
+                "Chart will appear after analysis" if not path else f"Missing: {path}"
+            )
             self.image.setPixmap(QPixmap())
             self.save_btn.setEnabled(False)
             return
@@ -489,32 +226,233 @@ class TablePanel(QTableWidget):
         self.resizeColumnsToContents()
 
 
+def _json_default(obj: Any) -> Any:
+    if isinstance(obj, (np.integer, np.floating)):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+
+class VerdictPanel(QGroupBox):
+    """Persistent AIAG-style acceptance summary."""
+
+    def __init__(self, title: str = "Acceptance"):
+        super().__init__(title)
+        outer = QVBoxLayout(self)
+        outer.setSpacing(10)
+
+        header = QHBoxLayout()
+        header.addStretch()
+        self.badge = QLabel("—")
+        self.badge.setObjectName("verdictBadge")
+        self._set_badge("")
+        header.addWidget(self.badge)
+        outer.addLayout(header)
+
+        self.metrics_grid = QGridLayout()
+        self.metrics_grid.setSpacing(6)
+        self.metrics_grid.setColumnStretch(1, 1)
+        outer.addLayout(self.metrics_grid)
+
+        self.warning_label = make_hint_label("")
+        self.warning_label.hide()
+        outer.addWidget(self.warning_label)
+        self.clear()
+
+    def _set_badge(self, verdict: str) -> None:
+        key = (verdict or "").lower()
+        display = VERDICT_DISPLAY.get(key, "—" if not verdict else verdict.title())
+        self.badge.setText(display)
+        self.badge.setStyleSheet(verdict_badge_style(key))
+
+    def _clear_metrics(self) -> None:
+        while self.metrics_grid.count():
+            item = self.metrics_grid.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def _add_metric(self, row: int, label: str, value: str) -> None:
+        lbl = QLabel(label)
+        lbl.setProperty("cssClass", "metricLabel")
+        polish_widget(lbl)
+        val = QLabel(value)
+        val.setProperty("cssClass", "metricValue")
+        polish_widget(val)
+        val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.metrics_grid.addWidget(lbl, row, 0)
+        self.metrics_grid.addWidget(val, row, 1)
+
+    def clear(self) -> None:
+        self._set_badge("")
+        self._clear_metrics()
+        self._add_metric(0, "Status", "Run analysis to see verdicts.")
+        self.warning_label.hide()
+
+    def set_type2(self, results: Dict[str, Any]) -> None:
+        acc = results.get("acceptance") or {}
+        worst = acc.get("pct_tol_verdict") or acc.get("pct_sv_verdict", "")
+        self._set_badge(worst)
+        self._clear_metrics()
+        row = 0
+        self._add_metric(row, "NDC", f"{results.get('ndc', '—')} ({acc.get('ndc_verdict', '—')})")
+        row += 1
+        self._add_metric(
+            row,
+            "%SV GRR",
+            f"{results['pct_study_var']['grr']:.2f}% ({acc.get('pct_sv_verdict', '—')})",
+        )
+        row += 1
+        if results.get("tolerance") and results.get("pct_tolerance"):
+            self._add_metric(
+                row,
+                "%GRR (Tol)",
+                f"{results['pct_tolerance']['grr']:.2f}% ({acc.get('pct_tol_verdict', '—')})",
+            )
+        self.warning_label.hide()
+
+    def set_type1(self, metrics: Dict[str, Any]) -> None:
+        acc = metrics.get("acceptance") or {}
+        overall = acc.get("overall", "")
+        self._set_badge(overall)
+        self._clear_metrics()
+        cg = metrics.get("cg", float("nan"))
+        cgk = metrics.get("cgk", float("nan"))
+        rows = [
+            ("Cg", f"{cg:.4g} ({acc.get('cg_verdict', '—')})"),
+            ("Cgk", f"{cgk:.4g} ({acc.get('cgk_verdict', '—')})"),
+            ("%Var (repeat)", f"{metrics.get('pct_var_repeatability', 0):.2f}%"),
+            ("%Var (repeat+bias)", f"{metrics.get('pct_var_repeatability_bias', 0):.2f}%"),
+            ("Bias significant", "yes" if acc.get("bias_significant") else "no"),
+        ]
+        for i, (label, value) in enumerate(rows):
+            self._add_metric(i, label, value)
+        if metrics.get("exploratory"):
+            self.warning_label.setText(
+                "Exploratory mode: set explicit tolerance and target for production acceptance."
+            )
+            self.warning_label.show()
+        else:
+            self.warning_label.hide()
+
+
+def export_msa_type2(
+    out_dir: str,
+    prefix: str,
+    results: Dict[str, Any],
+    tables: Dict[str, Any],
+) -> List[str]:
+    """Write Type 2 CSV/JSON artifacts; returns paths written."""
+    p = prefix or ""
+    written: List[str] = []
+    if tables.get("anova_table") is not None:
+        path = os.path.join(out_dir, f"{p}anova_table.csv")
+        tables["anova_table"].to_csv(path, index=False)
+        written.append(path)
+    if tables.get("variance_summary") is not None:
+        path = os.path.join(out_dir, f"{p}variance_components.csv")
+        tables["variance_summary"].to_csv(path, index=False)
+        written.append(path)
+    full = tables.get("full_anova")
+    if full is not None:
+        path = os.path.join(out_dir, f"{p}full_anova_table.csv")
+        full.to_csv(path, index=False)
+        written.append(path)
+    payload = {
+        "study_type": results.get("study_type", "gage_rr_type2"),
+        "measurement": results.get("measurement"),
+        "statistics": {
+            "n_parts": results.get("n_parts"),
+            "n_operators": results.get("n_operators"),
+            "n_measurements": results.get("n_measurements"),
+            "ndc": results.get("ndc"),
+        },
+        "variance_components": results.get("variance_components"),
+        "std_dev": results.get("std_dev"),
+        "study_var": results.get("study_var"),
+        "pct_contribution": results.get("pct_contribution"),
+        "pct_study_var": results.get("pct_study_var"),
+        "pct_tolerance": results.get("pct_tolerance"),
+        "acceptance": results.get("acceptance"),
+        "tolerance": results.get("tolerance"),
+    }
+    path = os.path.join(out_dir, f"{p}grr_results.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, default=_json_default)
+    written.append(path)
+    return written
+
+
+def export_msa_type1(
+    out_dir: str,
+    prefix: str,
+    measurement: str,
+    component: str,
+    metrics: Dict[str, Any],
+    summary_df,
+) -> List[str]:
+    p = prefix or ""
+    written: List[str] = []
+    path = os.path.join(out_dir, f"{p}type1_summary.csv")
+    summary_df.to_csv(path, index=False)
+    written.append(path)
+    path = os.path.join(out_dir, f"{p}type1_results.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "study_type": "type1",
+                "measurement": measurement,
+                "component": component,
+                "metrics": metrics,
+                "acceptance": metrics.get("acceptance"),
+            },
+            f,
+            indent=2,
+            default=_json_default,
+        )
+    written.append(path)
+    return written
+
+
+def _populate_column_combos(combo: QComboBox, columns: List[str], allow_empty: bool = True):
+    combo.clear()
+    if allow_empty:
+        combo.addItem("")
+    combo.addItems([str(c) for c in columns])
+
+
 # ---------------------------------------------------------------------------
-# ANOVA Tab
+# Gage R&R (Type 2) Tab
 # ---------------------------------------------------------------------------
 
-class AnovaTab(QWidget):
+class GageRRTab(QWidget):
     def __init__(self):
         super().__init__()
         self.df = None
         self.tmpdir = tempfile.mkdtemp(prefix="grr_anova_")
-        self._last_chart_paths = []
+        self._last_chart_paths: List[str] = []
+        self._last_results: Optional[Dict[str, Any]] = None
+        self._last_tables: Optional[Dict[str, Any]] = None
+        self._last_run_df = None
         self._init_ui()
 
     def _init_ui(self):
-        root = QHBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+        root.addWidget(PageHeader(
+            "Gage R&R (Type 2)",
+            "Configure study, run analysis, review acceptance and charts",
+        ))
 
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
-        left_scroll.setMinimumWidth(320)
-        left_scroll.setMaximumWidth(480)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         left_panel = QWidget()
         left_l = QVBoxLayout(left_panel)
         left_l.setSpacing(10)
-        left_l.setContentsMargins(0, 0, 8, 0)
+        left_l.setContentsMargins(8, 8, 8, 8)
 
         file_grp = QGroupBox("File && Output")
         fg = QGridLayout()
@@ -526,10 +464,10 @@ class AnovaTab(QWidget):
         self.prefix_edit = QLineEdit()
         self.prefix_edit.setPlaceholderText("Optional output filename prefix")
         self.merge_chk = QCheckBox("Merge all charts into one image")
-        fg.addWidget(QLabel("Data File"), 0, 0)
+        fg.addWidget(make_field_label("Data File"), 0, 0)
         fg.addWidget(self.file_edit, 0, 1)
         fg.addWidget(browse_btn, 0, 2)
-        fg.addWidget(QLabel("Output Prefix"), 1, 0)
+        fg.addWidget(make_field_label("Output Prefix"), 1, 0)
         fg.addWidget(self.prefix_edit, 1, 1, 1, 2)
         fg.addWidget(self.merge_chk, 2, 0, 1, 3)
         fg.setColumnStretch(1, 1)
@@ -549,64 +487,114 @@ class AnovaTab(QWidget):
         self.op_spin = QSpinBox()
         self.op_spin.setRange(1, 10)
         self.op_spin.setValue(3)
-        pg.addWidget(QLabel("Algorithm"), 0, 0)
-        pg.addWidget(self.algo_combo, 0, 1)
-        pg.addWidget(QLabel("Study Var (sv)"), 1, 0)
-        pg.addWidget(self.sv_spin, 1, 1)
-        pg.addWidget(QLabel("Alpha (av)"), 2, 0)
-        pg.addWidget(self.av_spin, 2, 1)
-        pg.addWidget(QLabel("Operators"), 3, 0)
-        pg.addWidget(self.op_spin, 3, 1)
+        self.tol_spin = QDoubleSpinBox()
+        self.tol_spin.setRange(0.0, 1e9)
+        self.tol_spin.setDecimals(6)
+        self.tol_spin.setValue(0.0)
+        self.tol_spin.setSpecialValueText("Off")
+        self.design_combo = QComboBox()
+        self.design_combo.addItems(["sequential", "comp_name", "columns"])
+        self.design_combo.currentTextChanged.connect(self._on_design_changed)
+        self.method_combo = QComboBox()
+        self.method_combo.addItems(["anova", "xbar_r", "nested"])
+        self.method_combo.currentTextChanged.connect(
+            lambda m: self.repro_combo.setEnabled(m == "anova")
+        )
+        self.repro_combo = QComboBox()
+        self.repro_combo.addItems(["operator_only", "operator_plus_interaction"])
+        self.part_col_combo = QComboBox()
+        self.operator_col_combo = QComboBox()
+        self.part_col_label = make_field_label("Part column")
+        self.operator_col_label = make_field_label("Operator column")
+        r = 0
+        for label, widget in [
+            ("Algorithm", self.algo_combo),
+            ("Study Var (sv)", self.sv_spin),
+            ("Alpha (av)", self.av_spin),
+            ("Method", self.method_combo),
+            ("Repro mode", self.repro_combo),
+            ("Operators", self.op_spin),
+            ("Tolerance", self.tol_spin),
+            ("Design", self.design_combo),
+        ]:
+            r = _add_form_row(pg, r, label, widget)
+        pg.addWidget(self.part_col_label, r, 0)
+        pg.addWidget(self.part_col_combo, r, 1)
+        r += 1
+        pg.addWidget(self.operator_col_label, r, 0)
+        pg.addWidget(self.operator_col_combo, r, 1)
         pg.setColumnStretch(1, 1)
         param_grp.setLayout(pg)
+        self._on_design_changed(self.design_combo.currentText())
 
         filt_grp = QGroupBox("Filters")
         flg = QGridLayout()
         flg.setSpacing(8)
+        self.include_edit = QLineEdit()
+        self.include_edit.setPlaceholderText("Space or comma separated")
         self.exclude_edit = QLineEdit()
         self.exclude_edit.setPlaceholderText("Space or comma separated component names")
         self.rm_chk = QCheckBox("Remove outliers (IQR)")
-        flg.addWidget(QLabel("Exclude"), 0, 0)
-        flg.addWidget(self.exclude_edit, 0, 1)
-        flg.addWidget(self.rm_chk, 1, 0, 1, 2)
+        _add_form_row(flg, 0, "Include", self.include_edit)
+        _add_form_row(flg, 1, "Exclude", self.exclude_edit)
+        flg.addWidget(self.rm_chk, 2, 0, 1, 2)
         flg.setColumnStretch(1, 1)
         filt_grp.setLayout(flg)
-
-        load_btn = _make_btn("Load File", "primary")
-        load_btn.clicked.connect(self._load_file)
-        run_btn = _make_btn("Run ANOVA", "success")
-        run_btn.clicked.connect(self._run)
-        actions = QVBoxLayout()
-        actions.setSpacing(8)
-        actions.addWidget(load_btn)
-        actions.addWidget(run_btn)
 
         left_l.addWidget(file_grp)
         left_l.addWidget(param_grp)
         left_l.addWidget(filt_grp)
-        left_l.addLayout(actions)
         left_l.addStretch()
         left_scroll.setWidget(left_panel)
+
+        left_col = QWidget()
+        left_col.setMinimumWidth(320)
+        left_col.setMaximumWidth(480)
+        left_col_l = QVBoxLayout(left_col)
+        left_col_l.setContentsMargins(0, 0, 0, 0)
+        left_col_l.setSpacing(0)
+        left_col_l.addWidget(left_scroll, 1)
+
+        action_bar = StickyActionBar()
+        load_btn = make_btn("Load File", "primary")
+        load_btn.clicked.connect(self._load_file)
+        run_btn = make_btn("Run Gage R&R", "success")
+        run_btn.clicked.connect(self._run)
+        export_btn = QPushButton("Export Results…")
+        export_btn.clicked.connect(self._export_results)
+        action_bar.add_row(load_btn, run_btn)
+        action_bar.add_widget(export_btn)
+        left_col_l.addWidget(action_bar)
 
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
         results = QWidget()
         rl = QVBoxLayout(results)
         rl.setSpacing(10)
-        rl.setContentsMargins(4, 4, 4, 8)
+        rl.setContentsMargins(12, 8, 12, 12)
 
         charts_toolbar = QHBoxLayout()
-        charts_toolbar.addWidget(_make_heading("Charts"))
+        charts_toolbar.addWidget(make_heading("Charts"))
         charts_toolbar.addStretch()
         dl_btn = QPushButton("Download All Charts…")
         dl_btn.clicked.connect(self._download_all)
         charts_toolbar.addWidget(dl_btn)
 
-        rl.addWidget(_make_heading("ANOVA Results"))
+        self.verdict_panel = VerdictPanel("Acceptance")
+        rl.addWidget(self.verdict_panel)
+        rl.addWidget(make_heading("Summary"))
         self.anova_table = TablePanel()
-        self.anova_table.setMinimumHeight(140)
+        self.anova_table.setMinimumHeight(120)
         rl.addWidget(self.anova_table)
-        rl.addWidget(_make_separator())
+        self.variance_table = TablePanel()
+        self.variance_table.setMinimumHeight(100)
+        rl.addWidget(make_heading("Variance Components"))
+        rl.addWidget(self.variance_table)
+        rl.addWidget(make_heading("Full ANOVA"))
+        self.full_anova_table = TablePanel()
+        self.full_anova_table.setMinimumHeight(120)
+        rl.addWidget(self.full_anova_table)
+        rl.addWidget(make_separator())
         rl.addLayout(charts_toolbar)
 
         self.img_cov = ImagePanel("Components of Variation")
@@ -628,14 +616,21 @@ class AnovaTab(QWidget):
         right_scroll.setWidget(results)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(left_scroll)
+        splitter.addWidget(left_col)
         splitter.addWidget(right_scroll)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([360, 1000])
-        root.addWidget(splitter)
+        root.addWidget(splitter, 1)
 
-    # -- Slots (logic unchanged) --
+    def _on_design_changed(self, design: str):
+        columns_mode = design == "columns"
+        self.op_spin.setEnabled(not columns_mode)
+        self.part_col_label.setVisible(columns_mode)
+        self.part_col_combo.setVisible(columns_mode)
+        self.operator_col_label.setVisible(columns_mode)
+        self.operator_col_combo.setVisible(columns_mode)
+        self.repro_combo.setEnabled(self.method_combo.currentText() == "anova")
 
     def _browse(self):
         path = select_file(self, "Select Input File")
@@ -648,16 +643,75 @@ class AnovaTab(QWidget):
             if not path:
                 raise ValueError("No file selected")
             df = load_and_clean_data(path)
+            inc = to_list_from_tokens(self.include_edit.text().split())
             excl = to_list_from_tokens(self.exclude_edit.text().split())
-            if excl:
-                df = apply_component_filters(df, exclude=excl)
+            df = apply_component_filters(df, include=inc, exclude=excl)
             measurement_cols = get_measurement_columns(df)
             self.df = df
             self.algo_combo.clear()
             self.algo_combo.addItems(measurement_cols)
+            cols = list(df.columns)
+            _populate_column_combos(self.part_col_combo, cols)
+            _populate_column_combos(self.operator_col_combo, cols)
+            msg = f"Loaded {len(measurement_cols)} measurement column(s)"
+            set_global_status(self, msg)
             QMessageBox.information(self, "Loaded", f"Loaded file. {len(measurement_cols)} measurement columns found.")
         except Exception as e:
+            set_global_status(self, "Load failed")
             QMessageBox.critical(self, "Load Error", str(e))
+
+    def _build_run_df(self):
+        design = DesignMode(self.design_combo.currentText())
+        part_col = self.part_col_combo.currentText().strip() or None
+        op_col = self.operator_col_combo.currentText().strip() or None
+        if design == DesignMode.COLUMNS:
+            if not part_col or not op_col:
+                raise ValueError("Select Part column and Operator column for columns design mode.")
+        return apply_study_design(
+            self.df.copy(),
+            mode=design,
+            n_operators=self.op_spin.value(),
+            part_col=part_col,
+            operator_col=op_col,
+        )
+
+    def _adapt_alt_results(self, alt: Dict[str, Any], algo: str, tol: Optional[float], sv: float) -> Dict[str, Any]:
+        vc = alt["variance_components"]
+        var_total = vc["total"]
+        pct_contrib = {
+            k: (vc[k] / var_total * 100) if var_total > 0 else 0
+            for k in ("repeatability", "reproducibility", "grr", "part")
+        }
+        results = {
+            "study_type": alt.get("study_type", alt.get("method", "gage_rr")),
+            "measurement": algo,
+            "n_parts": 0,
+            "n_operators": 0,
+            "n_measurements": 0,
+            "study_var_multiplier": sv,
+            "tolerance": tol,
+            "variance_components": vc,
+            "std_dev": alt["std_dev"],
+            "study_var": alt["study_var"],
+            "pct_contribution": pct_contrib,
+            "pct_study_var": alt["pct_study_var"],
+            "pct_tolerance": alt.get("pct_tolerance"),
+            "ndc": 0,
+            "full_anova_table": None,
+        }
+        results["acceptance"] = build_gage_rr_acceptance(results)
+        return results
+
+    def _export_results(self):
+        if not self._last_results or not self._last_tables:
+            QMessageBox.information(self, "Export", "Run analysis first.")
+            return
+        out_dir = QFileDialog.getExistingDirectory(self, "Export Results To", os.getcwd())
+        if not out_dir:
+            return
+        prefix = self.prefix_edit.text().strip()
+        paths = export_msa_type2(out_dir, prefix, self._last_results, self._last_tables)
+        QMessageBox.information(self, "Exported", f"Saved {len(paths)} file(s) to:\n{out_dir}")
 
     def _run(self):
         try:
@@ -668,18 +722,67 @@ class AnovaTab(QWidget):
             prefix = self.prefix_edit.text().strip()
             merge = self.merge_chk.isChecked()
             remove_outliers = self.rm_chk.isChecked()
+            method = self.method_combo.currentText()
 
-            run_df = assign_operators_sequential(self.df.copy(), n_operators=self.op_spin.value())
+            run_df = self._build_run_df()
             if remove_outliers:
                 before = len(run_df)
                 run_df, removed = remove_outliers_iqr(run_df, algo)
                 QMessageBox.information(self, "Outlier Removal", f"Removed {removed} rows (from {before} to {len(run_df)}).")
 
-            results = perform_anova_grr(run_df, algo, study_var=sv)
-            table = create_anova_table(results)
-            self.anova_table.load_dataframe(table)
+            tol_in = self.tol_spin.value()
+            tol = None if tol_in <= 0 else float(tol_in)
+            repro_mode: ReproMode = self.repro_combo.currentText()  # type: ignore[assignment]
 
-            if merge:
+            if method == "xbar_r":
+                alt = perform_xbar_r(run_df, algo, study_var=sv, tolerance=tol)
+                if alt is None:
+                    raise ValueError("Xbar-R analysis failed.")
+                results = self._adapt_alt_results(alt, algo, tol, sv)
+            elif method == "nested":
+                alt = perform_nested_grr(run_df, algo, study_var=sv, tolerance=tol)
+                if alt is None:
+                    raise ValueError("Nested GRR analysis failed.")
+                results = self._adapt_alt_results(alt, algo, tol, sv)
+            else:
+                results = perform_anova_grr(
+                    run_df,
+                    algo,
+                    study_var=sv,
+                    tolerance=tol,
+                    alpha=self.av_spin.value(),
+                    repro_mode=repro_mode,
+                )
+                if results is None:
+                    raise ValueError("ANOVA analysis failed (no valid data).")
+
+            table = create_anova_table(results)
+            var_table = create_variance_summary_df(results)
+            full_anova = results.get("full_anova_table")
+            self.anova_table.load_dataframe(table)
+            self.variance_table.load_dataframe(var_table)
+            if full_anova is not None:
+                self.full_anova_table.load_dataframe(full_anova)
+            else:
+                self.full_anova_table.setRowCount(0)
+                self.full_anova_table.setColumnCount(0)
+            self.verdict_panel.set_type2(results)
+            self._last_results = results
+            self._last_run_df = run_df
+            self._last_tables = {
+                "anova_table": table,
+                "variance_summary": var_table,
+                "full_anova": full_anova,
+            }
+
+            if method != "anova":
+                QMessageBox.information(
+                    self,
+                    "Gage R&R Complete",
+                    f"{method} analysis complete. Charts are available for ANOVA method only.",
+                )
+                self._last_chart_paths = []
+            elif merge:
                 merged_path = os.path.join(self.tmpdir, f"{prefix}merged_analysis.png")
                 plot_merged_charts(run_df, results, algo, merged_path)
                 self.img_cov.set_image(merged_path)
@@ -701,7 +804,9 @@ class AnovaTab(QWidget):
                 self.img_s.set_image(sch)
                 self.img_op.set_image(aop)
                 self._last_chart_paths = [cov, alg, sch, aop]
+            set_global_status(self, f"Analysis complete — {algo}")
         except Exception as e:
+            set_global_status(self, "Analysis failed")
             QMessageBox.critical(self, "Run Error", str(e))
 
     def _download_all(self):
@@ -731,23 +836,29 @@ class Type1Tab(QWidget):
         super().__init__()
         self.df = None
         self.tmpdir = tempfile.mkdtemp(prefix="grr_type1_")
-        self._last_chart_paths = []
+        self._last_chart_paths: List[str] = []
+        self._last_metrics: Optional[Dict[str, Any]] = None
+        self._last_summary = None
+        self._last_measurement = ""
+        self._last_component = ""
         self._init_ui()
 
     def _init_ui(self):
-        root = QHBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+        root.addWidget(PageHeader(
+            "Type 1 Gage Study",
+            "Single-operator repeatability and bias vs tolerance",
+        ))
 
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
-        left_scroll.setMinimumWidth(320)
-        left_scroll.setMaximumWidth(480)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         left_panel = QWidget()
         left_l = QVBoxLayout(left_panel)
         left_l.setSpacing(10)
-        left_l.setContentsMargins(0, 0, 8, 0)
+        left_l.setContentsMargins(8, 8, 8, 8)
 
         file_grp = QGroupBox("File && Output")
         fg = QGridLayout()
@@ -759,10 +870,10 @@ class Type1Tab(QWidget):
         self.prefix_edit = QLineEdit()
         self.prefix_edit.setPlaceholderText("Optional output filename prefix")
         self.merge_chk = QCheckBox("Merge all charts into one image")
-        fg.addWidget(QLabel("Data File"), 0, 0)
+        fg.addWidget(make_field_label("Data File"), 0, 0)
         fg.addWidget(self.file_edit, 0, 1)
         fg.addWidget(browse_btn, 0, 2)
-        fg.addWidget(QLabel("Output Prefix"), 1, 0)
+        fg.addWidget(make_field_label("Output Prefix"), 1, 0)
         fg.addWidget(self.prefix_edit, 1, 1, 1, 2)
         fg.addWidget(self.merge_chk, 2, 0, 1, 3)
         fg.setColumnStretch(1, 1)
@@ -789,11 +900,20 @@ class Type1Tab(QWidget):
         self.tol_spin.setSingleStep(0.1)
         self.tol_spin.setValue(0.0)
         self.tol_spin.setSpecialValueText("Auto")
+        self.target_spin = QDoubleSpinBox()
+        self.target_spin.setRange(-1e9, 1e9)
+        self.target_spin.setDecimals(6)
+        self.target_spin.setValue(0.0)
+        self.target_spin.setSpecialValueText("Auto")
         self.tf_spin = QDoubleSpinBox()
         self.tf_spin.setRange(0.0, 1e6)
         self.tf_spin.setDecimals(6)
         self.tf_spin.setSingleStep(0.1)
         self.tf_spin.setValue(1.0)
+        self.require_ref_chk = QCheckBox("Require explicit tolerance & target")
+        self.require_ref_chk.setToolTip(
+            "When checked, tolerance and target must be set (not Auto) before running."
+        )
 
         r = 0
         for label, widget in [
@@ -803,11 +923,11 @@ class Type1Tab(QWidget):
             ("Study Var (sv)", self.sv_spin),
             ("Alpha (av)", self.av_spin),
             ("Tolerance (tol)", self.tol_spin),
+            ("Target (ref)", self.target_spin),
             ("Tol. Factor (tf)", self.tf_spin),
         ]:
-            pg.addWidget(QLabel(label), r, 0)
-            pg.addWidget(widget, r, 1)
-            r += 1
+            r = _add_form_row(pg, r, label, widget)
+        pg.addWidget(self.require_ref_chk, r, 0, 1, 2)
         pg.setColumnStretch(1, 1)
         param_grp.setLayout(pg)
 
@@ -819,49 +939,58 @@ class Type1Tab(QWidget):
         self.exclude_edit = QLineEdit()
         self.exclude_edit.setPlaceholderText("Space or comma separated")
         self.rm_chk = QCheckBox("Remove outliers (IQR)")
-        flg.addWidget(QLabel("Include"), 0, 0)
-        flg.addWidget(self.include_edit, 0, 1)
-        flg.addWidget(QLabel("Exclude"), 1, 0)
-        flg.addWidget(self.exclude_edit, 1, 1)
+        _add_form_row(flg, 0, "Include", self.include_edit)
+        _add_form_row(flg, 1, "Exclude", self.exclude_edit)
         flg.addWidget(self.rm_chk, 2, 0, 1, 2)
         flg.setColumnStretch(1, 1)
         filt_grp.setLayout(flg)
 
-        load_btn = _make_btn("Load File", "primary")
-        load_btn.clicked.connect(self._load_file)
-        run_btn = _make_btn("Run Type 1", "success")
-        run_btn.clicked.connect(self._run)
-        actions = QVBoxLayout()
-        actions.setSpacing(8)
-        actions.addWidget(load_btn)
-        actions.addWidget(run_btn)
-
         left_l.addWidget(file_grp)
         left_l.addWidget(param_grp)
         left_l.addWidget(filt_grp)
-        left_l.addLayout(actions)
         left_l.addStretch()
         left_scroll.setWidget(left_panel)
+
+        left_col = QWidget()
+        left_col.setMinimumWidth(320)
+        left_col.setMaximumWidth(480)
+        left_col_l = QVBoxLayout(left_col)
+        left_col_l.setContentsMargins(0, 0, 0, 0)
+        left_col_l.setSpacing(0)
+        left_col_l.addWidget(left_scroll, 1)
+
+        action_bar = StickyActionBar()
+        load_btn = make_btn("Load File", "primary")
+        load_btn.clicked.connect(self._load_file)
+        run_btn = make_btn("Run Type 1", "success")
+        run_btn.clicked.connect(self._run)
+        export_btn = QPushButton("Export Results…")
+        export_btn.clicked.connect(self._export_results)
+        action_bar.add_row(load_btn, run_btn)
+        action_bar.add_widget(export_btn)
+        left_col_l.addWidget(action_bar)
 
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
         results = QWidget()
         rl = QVBoxLayout(results)
         rl.setSpacing(10)
-        rl.setContentsMargins(4, 4, 4, 8)
+        rl.setContentsMargins(12, 8, 12, 12)
 
         charts_toolbar = QHBoxLayout()
-        charts_toolbar.addWidget(_make_heading("Charts"))
+        charts_toolbar.addWidget(make_heading("Charts"))
         charts_toolbar.addStretch()
         dl_btn = QPushButton("Download All Charts…")
         dl_btn.clicked.connect(self._download_all)
         charts_toolbar.addWidget(dl_btn)
 
-        rl.addWidget(_make_heading("Type 1 Summary"))
+        self.verdict_panel = VerdictPanel("Acceptance")
+        rl.addWidget(self.verdict_panel)
+        rl.addWidget(make_heading("Summary"))
         self.summary_table = TablePanel()
         self.summary_table.setMinimumHeight(140)
         rl.addWidget(self.summary_table)
-        rl.addWidget(_make_separator())
+        rl.addWidget(make_separator())
         rl.addLayout(charts_toolbar)
 
         self.img_dist = ImagePanel("Distribution vs Tolerance")
@@ -882,19 +1011,35 @@ class Type1Tab(QWidget):
         right_scroll.setWidget(results)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(left_scroll)
+        splitter.addWidget(left_col)
         splitter.addWidget(right_scroll)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([360, 1000])
-        root.addWidget(splitter)
-
-    # -- Slots (logic unchanged) --
+        root.addWidget(splitter, 1)
 
     def _browse(self):
         path = select_file(self, "Select Input File")
         if path:
             self.file_edit.setText(path)
+
+    def _export_results(self):
+        if not self._last_metrics or self._last_summary is None:
+            QMessageBox.information(self, "Export", "Run analysis first.")
+            return
+        out_dir = QFileDialog.getExistingDirectory(self, "Export Results To", os.getcwd())
+        if not out_dir:
+            return
+        prefix = self.prefix_edit.text().strip()
+        paths = export_msa_type1(
+            out_dir,
+            prefix,
+            self._last_measurement,
+            self._last_component,
+            self._last_metrics,
+            self._last_summary,
+        )
+        QMessageBox.information(self, "Exported", f"Saved {len(paths)} file(s) to:\n{out_dir}")
 
     def _load_file(self):
         try:
@@ -912,8 +1057,13 @@ class Type1Tab(QWidget):
             self.algo_combo.addItems(measurement_cols)
             self.comp_combo.clear()
             self.comp_combo.addItems(comps)
+            set_global_status(
+                self,
+                f"Loaded {len(measurement_cols)} measurement(s), {len(comps)} component(s)",
+            )
             QMessageBox.information(self, "Loaded", f"Loaded file. {len(measurement_cols)} measurement columns; {len(comps)} components.")
         except Exception as e:
+            set_global_status(self, "Load failed")
             QMessageBox.critical(self, "Load Error", str(e))
 
     def _run(self):
@@ -930,6 +1080,7 @@ class Type1Tab(QWidget):
             prefix = self.prefix_edit.text().strip()
             merge = self.merge_chk.isChecked()
             remove_outliers = self.rm_chk.isChecked()
+            require_ref = self.require_ref_chk.isChecked()
 
             subset = self.df[self.df['Comp_Name'] == comp].copy()
             values = subset[algo].dropna()
@@ -943,9 +1094,31 @@ class Type1Tab(QWidget):
                 raise ValueError("Not enough readings after filtering/limit")
 
             tol_val = None if tol_in <= 0 else float(tol_in)
-            metrics = compute_type1_metrics(values, sv=sv, tol=tol_val, target=None, alpha=av, tolerance_factor=tf)
+            target_in = self.target_spin.value()
+            target_is_auto = target_in == 0
+            target_val = None if target_is_auto else float(target_in)
+            if require_ref:
+                if tol_val is None:
+                    raise ValueError("Require reference: set Tolerance (tol) to a value > 0.")
+                if target_val is None:
+                    raise ValueError("Require reference: set Target (ref) to a value (not Auto).")
+
+            metrics = compute_type1_metrics(
+                values,
+                sv=sv,
+                tol=tol_val,
+                target=target_val,
+                alpha=av,
+                tolerance_factor=tf,
+                require_reference=require_ref,
+            )
             summary = create_type1_summary_df(metrics)
             self.summary_table.load_dataframe(summary)
+            self.verdict_panel.set_type1(metrics)
+            self._last_metrics = metrics
+            self._last_summary = summary
+            self._last_measurement = algo
+            self._last_component = comp
 
             if merge:
                 merged = os.path.join(self.tmpdir, f"{prefix}type1_merged.png")
@@ -965,7 +1138,9 @@ class Type1Tab(QWidget):
                 self.img_ind.set_image(ind)
                 self.img_mr.set_image(mr)
                 self._last_chart_paths = [dist, ind, mr]
+            set_global_status(self, f"Type 1 complete — {comp} / {algo}")
         except Exception as e:
+            set_global_status(self, "Analysis failed")
             QMessageBox.critical(self, "Run Error", str(e))
 
     def _download_all(self):
@@ -1020,19 +1195,21 @@ class ParseTab(QWidget):
             self._set_status("Loading mode changed — click Load File to reload data.")
 
     def _init_ui(self):
-        root = QHBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+        root.addWidget(PageHeader(
+            "Data Preparation",
+            "Load, filter, preview, and export study-ready data",
+        ))
 
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
-        left_scroll.setMinimumWidth(340)
-        left_scroll.setMaximumWidth(440)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         left_panel = QWidget()
         left_l = QVBoxLayout(left_panel)
         left_l.setSpacing(10)
-        left_l.setContentsMargins(0, 0, 8, 0)
+        left_l.setContentsMargins(8, 8, 8, 8)
 
         src_grp = QGroupBox("Data source")
         sg = QGridLayout()
@@ -1043,10 +1220,10 @@ class ParseTab(QWidget):
         browse_btn.clicked.connect(self._browse)
         self.prefix_edit = QLineEdit()
         self.prefix_edit.setPlaceholderText("Optional output filename prefix")
-        sg.addWidget(QLabel("Data File"), 0, 0)
+        sg.addWidget(make_field_label("Data File"), 0, 0)
         sg.addWidget(self.file_edit, 0, 1)
         sg.addWidget(browse_btn, 0, 2)
-        sg.addWidget(QLabel("Output Prefix"), 1, 0)
+        sg.addWidget(make_field_label("Output Prefix"), 1, 0)
         sg.addWidget(self.prefix_edit, 1, 1, 1, 2)
         sg.setColumnStretch(1, 1)
         src_grp.setLayout(sg)
@@ -1061,12 +1238,10 @@ class ParseTab(QWidget):
         self.mode_group.addButton(self.radio_prepared, 0)
         self.mode_group.addButton(self.radio_original, 1)
         self.mode_group.buttonClicked.connect(lambda _: self._on_mode_changed())
-        mode_hint = QLabel(
+        mode_hint = make_hint_label(
             "Prepared: drop auxiliary fields, add Component, and you can assign operators for export. "
             "Original: keep file columns; no Component, Operator, or Part columns."
         )
-        mode_hint.setWordWrap(True)
-        mode_hint.setStyleSheet("color: #a6adc8; font-size: 12px;")
         mv.addWidget(self.radio_prepared)
         mv.addWidget(self.radio_original)
         mv.addWidget(mode_hint)
@@ -1078,19 +1253,19 @@ class ParseTab(QWidget):
         self.op_spin = QSpinBox()
         self.op_spin.setRange(1, 10)
         self.op_spin.setValue(3)
+        self.design_combo = QComboBox()
+        self.design_combo.addItems(["sequential", "comp_name"])
         self.algo_combo = QComboBox()
         self.algo_combo.setPlaceholderText("Load a file to populate")
-        mg.addWidget(QLabel("Operators"), 0, 0)
-        mg.addWidget(self.op_spin, 0, 1)
-        mg.addWidget(QLabel("Measurement"), 1, 0)
-        mg.addWidget(self.algo_combo, 1, 1)
+        _add_form_row(mg, 0, "Operators", self.op_spin)
+        _add_form_row(mg, 1, "Design", self.design_combo)
+        _add_form_row(mg, 2, "Measurement", self.algo_combo)
+        design_hint = make_hint_label(
+            "Use comp_name when each Comp_Name is a distinct part in the Gage R&R study."
+        )
+        mg.addWidget(design_hint, 3, 0, 1, 2)
         mg.setColumnStretch(1, 1)
         meas_grp.setLayout(mg)
-
-        load_btn = _make_btn("Load File", "primary")
-        load_btn.clicked.connect(self._load_file)
-        load_row = QHBoxLayout()
-        load_row.addWidget(load_btn)
 
         sel_grp = QGroupBox("Selection")
         sv = QVBoxLayout()
@@ -1108,56 +1283,57 @@ class ParseTab(QWidget):
         sv.addWidget(disp_comp_btn)
         sel_grp.setLayout(sv)
 
-        prev_grp = QGroupBox("Preview")
-        pv = QHBoxLayout()
-        preview_btn = _make_btn("Preview", "primary")
-        preview_btn.clicked.connect(self._preview)
-        preview_iqr_btn = QPushButton("Preview + IQR")
-        preview_iqr_btn.clicked.connect(self._preview_with_iqr)
-        pv.addWidget(preview_btn)
-        pv.addWidget(preview_iqr_btn)
-        prev_grp.setLayout(pv)
-
-        exp_grp = QGroupBox("Export")
-        ev = QHBoxLayout()
-        save_btn = _make_btn("Save…", "success")
-        save_btn.clicked.connect(self._save_dialog)
-        ev.addWidget(save_btn)
-        exp_grp.setLayout(ev)
-
         left_l.addWidget(src_grp)
         left_l.addWidget(mode_grp)
         left_l.addWidget(meas_grp)
-        left_l.addLayout(load_row)
         left_l.addWidget(sel_grp)
-        left_l.addWidget(prev_grp)
-        left_l.addWidget(exp_grp)
         left_l.addStretch()
         left_scroll.setWidget(left_panel)
+
+        left_col = QWidget()
+        left_col.setMinimumWidth(340)
+        left_col.setMaximumWidth(440)
+        left_col_l = QVBoxLayout(left_col)
+        left_col_l.setContentsMargins(0, 0, 0, 0)
+        left_col_l.setSpacing(0)
+        left_col_l.addWidget(left_scroll, 1)
+
+        action_bar = StickyActionBar()
+        load_btn = make_btn("Load File", "primary")
+        load_btn.clicked.connect(self._load_file)
+        preview_btn = make_btn("Preview", "primary")
+        preview_btn.clicked.connect(self._preview)
+        preview_iqr_btn = QPushButton("Preview + IQR")
+        preview_iqr_btn.clicked.connect(self._preview_with_iqr)
+        save_btn = make_btn("Save…", "success")
+        save_btn.clicked.connect(self._save_dialog)
+        action_bar.add_row(load_btn, preview_btn, preview_iqr_btn)
+        action_bar.add_widget(save_btn)
+        left_col_l.addWidget(action_bar)
 
         right_w = QWidget()
         right_l = QVBoxLayout(right_w)
         right_l.setSpacing(8)
-        right_l.setContentsMargins(8, 0, 0, 0)
-        right_l.addWidget(_make_heading("Preview"))
-        self.status_lbl = _make_status_label("Ready — load a file to begin")
+        right_l.setContentsMargins(12, 8, 12, 12)
+        self.status_lbl = make_status_label("Ready — load a file to begin")
         right_l.addWidget(self.status_lbl)
-        right_l.addWidget(_make_heading("Components"))
+        right_l.addWidget(make_heading("Components"))
         self.comp_text = QTextEdit()
         self.comp_text.setReadOnly(True)
         self.comp_text.setMinimumHeight(120)
         self.comp_text.setPlaceholderText("Component names appear here after “Display component list”.")
         right_l.addWidget(self.comp_text)
+        right_l.addWidget(make_heading("Data preview"))
         self.table = TablePanel()
         right_l.addWidget(self.table, 1)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(left_scroll)
+        splitter.addWidget(left_col)
         splitter.addWidget(right_w)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([380, 980])
-        root.addWidget(splitter)
+        root.addWidget(splitter, 1)
 
     # -- Slots --
 
@@ -1184,8 +1360,10 @@ class ParseTab(QWidget):
             if preserve:
                 self.df_preview = self.df_base.copy()
             else:
-                self.df_preview = assign_operators_sequential(
-                    self.df_base.copy(), n_operators=self.op_spin.value()
+                self.df_preview = apply_study_design(
+                    self.df_base.copy(),
+                    mode=DesignMode(self.design_combo.currentText()),
+                    n_operators=self.op_spin.value(),
                 )
             self._render(self.df_preview)
         except Exception as e:
@@ -1215,7 +1393,11 @@ class ParseTab(QWidget):
             if keep_cols:
                 df = df[keep_cols]
         if not self._preserve_source_columns():
-            df = assign_operators_sequential(df, n_operators=self.op_spin.value())
+            df = apply_study_design(
+                df,
+                mode=DesignMode(self.design_combo.currentText()),
+                n_operators=self.op_spin.value(),
+            )
         return df
 
     def _select_algorithms_dialog(self):
@@ -1225,8 +1407,8 @@ class ParseTab(QWidget):
         meas_cols = get_measurement_columns(self.df_base)
         dlg = QDialog(self)
         dlg.setWindowTitle("Select Algorithms")
-        dlg.setMinimumWidth(360)
         layout = QVBoxLayout(dlg)
+        _style_selection_dialog(dlg, layout)
         layout.addWidget(QLabel("Check the algorithms to keep:"))
         lst = QListWidget()
         lst.setSelectionMode(QListWidget.NoSelection)
@@ -1253,8 +1435,8 @@ class ParseTab(QWidget):
         components = sorted(self.df_base['Comp_Name'].dropna().astype(str).unique().tolist())
         dlg = QDialog(self)
         dlg.setWindowTitle("Select Components")
-        dlg.setMinimumWidth(360)
         layout = QVBoxLayout(dlg)
+        _style_selection_dialog(dlg, layout)
         layout.addWidget(QLabel("Check the components to keep:"))
         lst = QListWidget()
         lst.setSelectionMode(QListWidget.NoSelection)
@@ -1311,8 +1493,8 @@ class ParseTab(QWidget):
                 raise ValueError("Nothing to save. Run Preview first.")
             dlg = QDialog(self)
             dlg.setWindowTitle("Save Parsed Data")
-            dlg.setMinimumWidth(280)
             lay = QVBoxLayout(dlg)
+            _style_selection_dialog(dlg, lay)
             lay.addWidget(QLabel("Choose output format:"))
             btns = QDialogButtonBox()
             btn_csv = btns.addButton("CSV", QDialogButtonBox.AcceptRole)
@@ -1365,11 +1547,19 @@ class ParseTab(QWidget):
 
     def _set_status(self, msg: str):
         self.status_lbl.setText(msg)
+        set_global_status(self, msg)
 
 
 # ---------------------------------------------------------------------------
 # Main Window
 # ---------------------------------------------------------------------------
+
+_NAV_ITEMS = (
+    ("Gage R&R (Type 2)", "Type 2 study with ANOVA, Xbar-R, or nested methods"),
+    ("Type 1 Gage", "Single-operator repeatability and bias analysis"),
+    ("Parsing", "Load, filter, and export study-ready measurement data"),
+)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -1377,40 +1567,57 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Gage R&R Desktop")
         self.resize(1400, 900)
 
-        shell = QWidget()
-        shell_l = QHBoxLayout(shell)
-        shell_l.setContentsMargins(0, 0, 0, 0)
-        shell_l.setSpacing(0)
+        central = QWidget()
+        central_l = QVBoxLayout(central)
+        central_l.setContentsMargins(0, 0, 0, 0)
+        central_l.setSpacing(0)
+        central_l.addWidget(AppHeader())
+
+        body = QWidget()
+        body_l = QHBoxLayout(body)
+        body_l.setContentsMargins(0, 0, 0, 0)
+        body_l.setSpacing(0)
 
         nav_col = QWidget()
-        nav_col.setFixedWidth(220)
+        nav_col.setFixedWidth(232)
         nav_col.setObjectName("navSidebar")
         nav_l = QVBoxLayout(nav_col)
         nav_l.setContentsMargins(12, 16, 8, 12)
         nav_l.setSpacing(8)
-        nav_title = QLabel("Workflow")
-        nav_title.setStyleSheet("color: #7c8aff; font-weight: 700; font-size: 11px; letter-spacing: 0.08em;")
+        nav_title = QLabel("WORKFLOW")
+        nav_title.setObjectName("navSectionLabel")
         nav_l.addWidget(nav_title)
         nav = QListWidget()
         nav.setObjectName("navSidebarList")
-        for text in ("ANOVA", "Type 1 Gage", "Parsing"):
-            QListWidgetItem(text, nav)
+        for text, tip in _NAV_ITEMS:
+            item = QListWidgetItem(text, nav)
+            item.setToolTip(tip)
         nav.setCurrentRow(0)
         nav_l.addWidget(nav, 1)
 
-        stack = QStackedWidget()
-        stack.addWidget(AnovaTab())
-        stack.addWidget(Type1Tab())
-        stack.addWidget(ParseTab())
-        nav.currentRowChanged.connect(stack.setCurrentIndex)
+        self.stack = QStackedWidget()
+        self.stack.addWidget(GageRRTab())
+        self.stack.addWidget(Type1Tab())
+        self.stack.addWidget(ParseTab())
+        nav.currentRowChanged.connect(self.stack.setCurrentIndex)
 
-        shell_l.addWidget(nav_col)
-        shell_l.addWidget(stack, 1)
-        self.setCentralWidget(shell)
+        body_l.addWidget(nav_col)
+        body_l.addWidget(self.stack, 1)
+        central_l.addWidget(body, 1)
+        self.setCentralWidget(central)
+
+        self.statusBar().showMessage("Ready")
+
+    def set_status(self, msg: str) -> None:
+        self.statusBar().showMessage(msg)
 
 
 def main():
     app = QApplication(sys.argv)
+    for style_name in ("Windows", "Fusion"):
+        if style_name in QStyleFactory.keys():
+            app.setStyle(style_name)
+            break
     app.setStyleSheet(STYLESHEET)
     win = MainWindow()
     win.show()

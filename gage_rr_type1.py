@@ -1,8 +1,7 @@
 """
 Type 1 Gage Study (Single part, single operator, repeated measurements)
 
-This script mirrors the UX of the Type I ANOVA app but implements a Type 1
-gage study with:
+Implements a Type 1 gage study with:
 - CLI flags consistent with the main script
 - 4-significant-figure outputs for CSV summaries
 - Optional merged plot output
@@ -33,133 +32,12 @@ from data_parser import (
     apply_component_filters,
     remove_outliers_iqr_series,
     get_measurement_columns,
-    normalize_component_list
+    normalize_component_list,
 )
+from grr_tool.msa.type1 import compute_type1_metrics
+from grr_tool.msa.tables import create_type1_summary_df, format4
 
 warnings.filterwarnings('ignore')
-
-
-# Data loading function moved to data_parser module
-
-
-# Outlier removal function moved to data_parser module
-
-
-def compute_type1_metrics(
-    values: pd.Series,
-    sv: float = 6.0,
-    tol: Optional[float] = None,
-    target: Optional[float] = None,
-    alpha: float = 0.25,
-    tolerance_factor: float = 1.0,
-) -> Dict:
-    """
-    Compute Type 1 gage study metrics given a series of repeated measurements.
-    """
-    values = values.dropna().astype(float)
-    n = int(values.shape[0])
-    if n < 2:
-        raise ValueError("Insufficient data for Type 1 study (need at least 2 readings)")
-
-    mean_val = float(values.mean())
-    sd = float(values.std(ddof=1))
-
-    # Study variation
-    study_var = sv * sd
-
-    # Tolerance
-    if tol is None:
-        # Default tolerance: 6 * sd * 1.33 (capability target) / 0.2
-        tol = 6.0 * sd * 1.33 / 0.2
-
-    # Target
-    if target is None:
-        # Default reference is the dataset median (for the selected series)
-        target = float(np.median(values.values))
-
-    # Specs
-    lsl = target - tol / 2.0
-    usl = target + tol / 2.0
-
-    # Control limits based on tolerance factor
-    ucl = target + 0.5 * tolerance_factor * tol
-    lcl = target - 0.5 * tolerance_factor * tol
-
-    # Capability indices for gage
-    cg = tol / (sv * sd) if (sv > 0 and sd > 0) else np.nan
-    cgk = min(usl - mean_val, mean_val - lsl) / (3.0 * sd) if sd > 0 else np.nan
-
-    # Bias and bias inference
-    bias = mean_val - target
-    se_mean = sd / np.sqrt(n)
-    t_stat = bias / se_mean if se_mean > 0 else np.nan
-    df = n - 1
-    p_val = 2 * (1 - stats.t.cdf(abs(t_stat), df)) if not np.isnan(t_stat) else np.nan
-
-    # Mean confidence interval
-    t_crit = stats.t.ppf(1 - alpha / 2.0, df)
-    ci_low = mean_val - t_crit * se_mean
-    ci_high = mean_val + t_crit * se_mean
-
-    # Bias % of tolerance
-    bias_pct_tol = (abs(bias) / tol * 100.0) if tol > 0 else np.nan
-
-    return {
-        'n': n,
-        'mean': mean_val,
-        'sd': sd,
-        'study_var': study_var,
-        'tol': float(tol),
-        'tf': float(tolerance_factor),
-        'target': float(target),
-        'lsl': float(lsl),
-        'usl': float(usl),
-        'lcl': float(lcl),
-        'ucl': float(ucl),
-        'cg': float(cg) if not np.isnan(cg) else np.nan,
-        'cgk': float(cgk) if not np.isnan(cgk) else np.nan,
-        'bias': float(bias),
-        'bias_pct_tol': float(bias_pct_tol) if not np.isnan(bias_pct_tol) else np.nan,
-        't': float(t_stat) if not np.isnan(t_stat) else np.nan,
-        'p': float(p_val) if not np.isnan(p_val) else np.nan,
-        'ci_low': float(ci_low),
-        'ci_high': float(ci_high),
-        'alpha': float(alpha),
-        'sv': float(sv),
-    }
-
-
-def format4(x: float) -> str:
-    try:
-        return f"{x:.4g}"
-    except Exception:
-        return str(x)
-
-
-def create_type1_summary_df(metrics: Dict) -> pd.DataFrame:
-    """Create a one-row summary DataFrame with 4 significant figures."""
-    row = {
-        'n': metrics['n'],
-        'mean': format4(metrics['mean']),
-        'sd': format4(metrics['sd']),
-        '6sigma': format4(metrics['study_var']),
-        'tol': format4(metrics['tol']),
-        'tf': format4(metrics.get('tf', 1.0)),
-        'target': format4(metrics['target']),
-        'LSL': format4(metrics['lsl']),
-        'USL': format4(metrics['usl']),
-        'LCL': format4(metrics.get('lcl', np.nan)),
-        'UCL': format4(metrics.get('ucl', np.nan)),
-        'Cg': format4(metrics['cg']),
-        'Cgk': format4(metrics['cgk']),
-        'bias': format4(metrics['bias']),
-        'bias_%tol': format4(metrics['bias_pct_tol']),
-        't': format4(metrics['t']),
-        'p': format4(metrics['p']),
-        'CI_low': format4(metrics['ci_low']),
-        'CI_high': format4(metrics['ci_high']),
-    }
-    return pd.DataFrame([row])
 
 
 def plot_distribution_vs_tolerance(values: pd.Series, metrics: Dict, output_path: str):
@@ -425,6 +303,9 @@ Examples:
     parser.add_argument('--rm', '--remove-outliers', action='store_true',
                         help='Remove outliers using IQR (1.5*IQR) for the selected series before analysis')
 
+    parser.add_argument('--require-reference', action='store_true',
+                        help='Require explicit --tol and --target (no exploratory defaults)')
+
     return parser.parse_args()
 
 
@@ -533,7 +414,20 @@ def main():
         return
 
     # Compute metrics
-    metrics = compute_type1_metrics(values, sv=args.sv, tol=args.tol, target=args.target, alpha=args.av, tolerance_factor=args.tf)
+    metrics = compute_type1_metrics(
+        values,
+        sv=args.sv,
+        tol=args.tol,
+        target=args.target,
+        alpha=args.av,
+        tolerance_factor=args.tf,
+        require_reference=args.require_reference,
+    )
+    if metrics.get('acceptance'):
+        acc = metrics['acceptance']
+        print(f"\nVerdict: {acc.get('overall')} (Cg: {acc.get('cg_verdict')}, Cgk: {acc.get('cgk_verdict')})")
+        if metrics.get('exploratory'):
+            print("  Note: exploratory mode — provide --tol and --target for production acceptance.")
 
     # Output prefix
     prefix = args.output_prefix

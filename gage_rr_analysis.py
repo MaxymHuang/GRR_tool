@@ -1,251 +1,36 @@
 """
-Gage R&R Analysis Application
-Performs ANOVA-based Type I Gage R&R analysis with automated operator assignment
-and generates four visualization charts plus summary tables.
+Gage R&R Analysis Application (Type 2 — crossed ANOVA)
+Performs ANOVA-based Gage R&R with automated or column-mapped study design
+and generates visualization charts plus summary tables.
 """
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import stats
-from typing import Dict, Tuple, List
+from typing import Dict
 import json
 import warnings
 import argparse
 import sys
 from data_parser import (
-    load_and_clean_data, 
-    apply_component_filters, 
-    remove_outliers_iqr, 
-    get_measurement_columns, 
-    assign_operators_sequential
+    load_and_clean_data,
+    apply_component_filters,
+    remove_outliers_iqr,
+    get_measurement_columns,
+    apply_study_design,
 )
+from grr_tool.msa import (
+    perform_anova_grr,
+    create_anova_table,
+    create_variance_summary_df,
+    DesignMode,
+)
+from grr_tool.msa.gage_rr import ReproMode
+from grr_tool.msa.xbar_r import perform_xbar_r
+from grr_tool.msa.nested import perform_nested_grr
+from grr_tool.msa.reml_check import reml_variance_components
+
 warnings.filterwarnings('ignore')
-
-
-# Data loading function moved to data_parser module
-
-
-def perform_anova_grr(df: pd.DataFrame, measurement_col: str, study_var: float = 6.0) -> Dict:
-    """
-    Perform ANOVA-based Gage R&R analysis for a single measurement.
-    
-    Args:
-        df: DataFrame with columns ['Part', 'Operator', measurement_col]
-        measurement_col: Name of the measurement column to analyze
-        
-    Returns:
-        Dictionary containing variance components and statistics
-    """
-    # Filter data for this measurement
-    data = df[['Part', 'Operator', measurement_col]].copy()
-    data = data.dropna()
-    
-    if len(data) == 0:
-        return None
-    
-    # Get unique parts and operators
-    parts = data['Part'].unique()
-    operators = data['Operator'].unique()
-    
-    n_parts = len(parts)
-    n_operators = len(operators)
-    n_measurements = len(data)
-    
-    # Calculate actual replicates per part-operator combination
-    part_op_counts = data.groupby(['Part', 'Operator']).size()
-    n_replicates = int(part_op_counts.mean())
-    
-    # Calculate grand mean
-    grand_mean = data[measurement_col].mean()
-    
-    # Calculate sum of squares
-    # Total sum of squares
-    ss_total = np.sum((data[measurement_col] - grand_mean) ** 2)
-    
-    # Part sum of squares (main effect)
-    part_means = data.groupby('Part')[measurement_col].mean()
-    ss_part = 0
-    for part in parts:
-        part_data = data[data['Part'] == part]
-        n_part = len(part_data)
-        ss_part += n_part * (part_means[part] - grand_mean) ** 2
-    
-    # Operator sum of squares (main effect)
-    operator_means = data.groupby('Operator')[measurement_col].mean()
-    ss_operator = 0
-    for operator in operators:
-        op_data = data[data['Operator'] == operator]
-        n_op = len(op_data)
-        ss_operator += n_op * (operator_means[operator] - grand_mean) ** 2
-    
-    # Part-Operator interaction
-    part_op_means = data.groupby(['Part', 'Operator'])[measurement_col].mean()
-    ss_interaction = 0
-    for (part, operator), group in data.groupby(['Part', 'Operator']):
-        if len(group) > 0:
-            group_mean = group[measurement_col].mean()
-            n_group = len(group)
-            expected = part_means[part] + operator_means[operator] - grand_mean
-            ss_interaction += n_group * (group_mean - expected) ** 2
-    
-    # Equipment (Repeatability) sum of squares - within part-operator combination
-    ss_equipment = 0
-    for (part, operator), group in data.groupby(['Part', 'Operator']):
-        if len(group) > 1:
-            group_mean = group[measurement_col].mean()
-            ss_equipment += np.sum((group[measurement_col] - group_mean) ** 2)
-    
-    # Degrees of freedom
-    df_total = n_measurements - 1
-    df_part = n_parts - 1
-    df_operator = n_operators - 1
-    df_interaction = (n_parts - 1) * (n_operators - 1)
-    # df for equipment is total observations minus number of part-operator groups
-    n_groups = len(part_op_counts)
-    df_equipment = n_measurements - n_groups
-    
-    # Mean squares
-    ms_part = ss_part / df_part if df_part > 0 else 0
-    ms_operator = ss_operator / df_operator if df_operator > 0 else 0
-    ms_interaction = ss_interaction / df_interaction if df_interaction > 0 else 0
-    ms_equipment = ss_equipment / df_equipment if df_equipment > 0 else 0
-    
-    # Variance components using Expected Mean Squares (EMS)
-    # For a crossed design with replicates:
-    # EMS[Equipment] = σ²_equipment
-    # EMS[Interaction] = σ²_equipment + r*σ²_interaction
-    # EMS[Operator] = σ²_equipment + r*σ²_interaction + p*r*σ²_operator
-    # EMS[Part] = σ²_equipment + r*σ²_interaction + o*r*σ²_part
-    
-    if n_replicates > 1:
-        # With replicates, we can estimate all components
-        var_equipment = ms_equipment
-        var_interaction = max(0, (ms_interaction - ms_equipment) / n_replicates)
-        var_operator = max(0, (ms_operator - ms_interaction) / (n_parts * n_replicates))
-        var_part = max(0, (ms_part - ms_interaction) / (n_operators * n_replicates))
-    else:
-        # Without replicates (n_replicates = 1), interaction becomes the repeatability
-        # Use simplified model where interaction term represents equipment variation
-        var_equipment = 0  # Cannot separate pure equipment error
-        var_interaction = ms_interaction  # This becomes our repeatability estimate
-        var_operator = max(0, (ms_operator - ms_interaction) / n_parts)
-        var_part = max(0, (ms_part - ms_interaction) / n_operators)
-    
-    # Gage R&R components
-    var_repeatability = var_equipment + var_interaction  # Combined repeatability
-    var_reproducibility = var_operator  # Operator variation only
-    var_grr = var_repeatability + var_reproducibility
-    var_total = var_grr + var_part
-    
-    # Standard deviations
-    sd_repeatability = np.sqrt(var_repeatability)
-    sd_reproducibility = np.sqrt(var_reproducibility)
-    sd_grr = np.sqrt(var_grr)
-    sd_part = np.sqrt(var_part)
-    sd_total = np.sqrt(var_total)
-    
-    # Study variation (study_var * sigma)
-    sv_repeatability = study_var * sd_repeatability
-    sv_reproducibility = study_var * sd_reproducibility
-    sv_grr = study_var * sd_grr
-    sv_part = study_var * sd_part
-    sv_total = study_var * sd_total
-    
-    # Percent contribution to total variation
-    pct_repeatability = (var_repeatability / var_total * 100) if var_total > 0 else 0
-    pct_reproducibility = (var_reproducibility / var_total * 100) if var_total > 0 else 0
-    pct_grr = (var_grr / var_total * 100) if var_total > 0 else 0
-    pct_part = (var_part / var_total * 100) if var_total > 0 else 0
-    
-    # Percent study variation (%SV)
-    pct_sv_repeatability = (sv_repeatability / sv_total * 100) if sv_total > 0 else 0
-    pct_sv_reproducibility = (sv_reproducibility / sv_total * 100) if sv_total > 0 else 0
-    pct_sv_grr = (sv_grr / sv_total * 100) if sv_total > 0 else 0
-    pct_sv_part = (sv_part / sv_total * 100) if sv_total > 0 else 0
-    
-    # Number of Distinct Categories
-    ndc = int(np.floor(1.41 * (sd_part / sd_grr))) if sd_grr > 0 else 0
-    
-    return {
-        'measurement': measurement_col,
-        'n_parts': n_parts,
-        'n_operators': n_operators,
-        'n_measurements': n_measurements,
-        'variance_components': {
-            'repeatability': var_repeatability,
-            'reproducibility': var_reproducibility,
-            'grr': var_grr,
-            'part': var_part,
-            'total': var_total
-        },
-        'std_dev': {
-            'repeatability': sd_repeatability,
-            'reproducibility': sd_reproducibility,
-            'grr': sd_grr,
-            'part': sd_part,
-            'total': sd_total
-        },
-        'study_var': {
-            'repeatability': sv_repeatability,
-            'reproducibility': sv_reproducibility,
-            'grr': sv_grr,
-            'part': sv_part,
-            'total': sv_total
-        },
-        'pct_contribution': {
-            'repeatability': pct_repeatability,
-            'reproducibility': pct_reproducibility,
-            'grr': pct_grr,
-            'part': pct_part
-        },
-        'pct_study_var': {
-            'repeatability': pct_sv_repeatability,
-            'reproducibility': pct_sv_reproducibility,
-            'grr': pct_sv_grr,
-            'part': pct_sv_part
-        },
-        'ndc': ndc
-    }
-
-
-def create_anova_table(results: Dict) -> pd.DataFrame:
-    """
-    Create ANOVA summary table similar to the HTML report format.
-    
-    Args:
-        results: Results dictionary from perform_anova_grr
-        
-    Returns:
-        DataFrame with ANOVA table (4 significant figures)
-    """
-    if results is None:
-        return None
-    
-    table_data = {
-        'Source': ['Repeatability', 'Total Variation', 'Total GR&R(P/T)'],
-        'StdDev(SD)': [
-            f"{results['std_dev']['repeatability']:.4g}",
-            f"{results['std_dev']['total']:.4g}",
-            f"{results['std_dev']['grr']:.4g}"
-        ],
-        'StdVar(6*Std)': [
-            f"{results['study_var']['repeatability']:.4g}",
-            f"{results['study_var']['total']:.4g}",
-            f"{results['study_var']['grr']:.4g}"
-        ],
-        '%Std Var(%SV)': [
-            f"{results['pct_study_var']['repeatability']:.4g}%",
-            "100.0%",
-            f"{results['pct_study_var']['grr']:.4g}%"
-        ]
-    }
-    
-    df = pd.DataFrame(table_data)
-    return df
-
-
-# Outlier removal function moved to data_parser module
 
 
 def plot_components_of_variation(results: Dict, output_path: str):
@@ -821,7 +606,37 @@ Examples:
                        type=int,
                        default=3,
                        help='Number of operators to simulate (1–10). Default: 3')
-    
+
+    parser.add_argument('--tol', type=float, default=None,
+                       help='Total tolerance width for %%GRR(Tol) metrics')
+
+    parser.add_argument('--design',
+                       choices=['sequential', 'columns', 'comp_name'],
+                       default='sequential',
+                       help='Study design: sequential row assignment, CSV columns, or Comp_Name as parts')
+
+    parser.add_argument('--part-col', default=None,
+                       help='Column name for Part (with --design columns)')
+
+    parser.add_argument('--operator-col', default=None,
+                       help='Column name for Operator (with --design columns)')
+
+    parser.add_argument('--replicate-col', default=None,
+                       help='Optional replicate/trial column (with --design columns)')
+
+    parser.add_argument('--repro-mode',
+                       choices=['operator_only', 'operator_plus_interaction'],
+                       default='operator_only',
+                       help='Reproducibility: operator only (default) or operator+interaction')
+
+    parser.add_argument('--method',
+                       choices=['anova', 'xbar_r', 'nested'],
+                       default='anova',
+                       help='Analysis method (default: anova)')
+
+    parser.add_argument('--reml-check', action='store_true',
+                       help='Run optional statsmodels REML cross-check (requires statsmodels)')
+
     return parser.parse_args()
 
 
@@ -830,7 +645,7 @@ def main():
     args = parse_arguments()
     
     print("="*70)
-    print("GAGE R&R ANALYSIS APPLICATION")
+    print("GAGE R&R (TYPE 2) ANALYSIS")
     print("="*70)
     
     # Load and clean data
@@ -843,8 +658,15 @@ def main():
     # Optionally limit number of measurements per component prior to operator assignment
     if args.num_measurements and args.num_measurements > 0 and 'Comp_Name' in df.columns:
         df = df.groupby('Comp_Name', group_keys=False).apply(lambda g: g.head(args.num_measurements)).reset_index(drop=True)
-    # Assign operators for ANOVA analysis
-    df = assign_operators_sequential(df, n_operators=args.operator)
+    design_mode = DesignMode(args.design)
+    df = apply_study_design(
+        df,
+        mode=design_mode,
+        n_operators=args.operator,
+        part_col=args.part_col,
+        operator_col=args.operator_col,
+        replicate_col=args.replicate_col,
+    )
 
     # Preview components and exit if requested
     if args.display_comp:
@@ -901,6 +723,10 @@ def main():
     print(f"Parameters:")
     print(f"  - Study Variation: {args.sv}")
     print(f"  - Alpha Value: {args.av}")
+    print(f"  - Tolerance: {args.tol if args.tol else '(not set)'}")
+    print(f"  - Design: {args.design}")
+    print(f"  - Method: {args.method}")
+    print(f"  - Repro Mode: {args.repro_mode}")
     print(f"  - Output Prefix: '{args.output_prefix}'")
     print(f"  - Operators: {max(1, min(int(getattr(args, 'operator', 3) or 1), 10))}")
     
@@ -911,55 +737,71 @@ def main():
         after = len(df)
         print(f"\nOutlier removal (IQR) for {target_measurement}: removed {removed} rows (from {before} to {after})")
 
-    # Perform Gage R&R analysis
-    results = perform_anova_grr(df, target_measurement, study_var=args.sv)
-    
+    repro_mode: ReproMode = args.repro_mode  # type: ignore[assignment]
+    tol = args.tol
+
+    if args.method == 'xbar_r':
+        alt = perform_xbar_r(df, target_measurement, study_var=args.sv, tolerance=tol)
+        if alt is None:
+            print("Xbar-R analysis failed.")
+            return
+        print("\nXbar-R method results (%Study Var):")
+        for k, v in alt['pct_study_var'].items():
+            print(f"  {k}: {v:.2f}%")
+        if tol and 'pct_tolerance' in alt:
+            print(f"  GRR %Tol: {alt['pct_tolerance']['grr']:.2f}%")
+        return
+
+    if args.method == 'nested':
+        alt = perform_nested_grr(df, target_measurement, study_var=args.sv, tolerance=tol)
+        if alt is None:
+            print("Nested GRR analysis failed.")
+            return
+        print("\nNested GRR results (%Study Var):")
+        for k, v in alt['pct_study_var'].items():
+            print(f"  {k}: {v:.2f}%")
+        return
+
+    results = perform_anova_grr(
+        df,
+        target_measurement,
+        study_var=args.sv,
+        tolerance=tol,
+        alpha=args.av,
+        repro_mode=repro_mode,
+    )
+
+    if args.reml_check:
+        reml = reml_variance_components(df, target_measurement)
+        if reml:
+            print("\nREML cross-check (statsmodels):")
+            for k, v in reml.items():
+                print(f"  {k}: {v:.6g}")
+        else:
+            print("\nREML cross-check skipped (statsmodels not installed or fit failed).")
+
     if results:
-        # Create ANOVA table
         anova_table = create_anova_table(results)
-        print(f"\n{target_measurement} - Gage R&R Results:")
+        print(f"\n{target_measurement} - Gage R&R (Type 2) Results:")
         print(anova_table.to_string(index=False))
         print(f"\nNumber of Distinct Categories = {results['ndc']}")
-        
-        # Define output prefix
+        if results.get('acceptance'):
+            acc = results['acceptance']
+            print(f"  %SV verdict: {acc.get('pct_sv_verdict')}  |  NDC verdict: {acc.get('ndc_verdict')}")
+            if 'pct_tol_verdict' in acc:
+                print(f"  %Tol verdict: {acc.get('pct_tol_verdict')} ({acc.get('pct_tol_grr', 0):.2f}%)")
+
+        full_anova = results.get('full_anova_table')
+        if full_anova is not None:
+            print("\nFull ANOVA Table:")
+            print(full_anova.to_string(index=False))
+
         prefix = args.output_prefix
-        
-        # Save ANOVA table to CSV
         anova_table.to_csv(f'{prefix}anova_table.csv', index=False)
-        
-        # Create variance components summary
-        variance_summary = pd.DataFrame({
-            'Component': ['Repeatability', 'Reproducibility', 'Gage R&R', 'Part-to-Part', 'Total'],
-            'Variance': [
-                f"{results['variance_components']['repeatability']:.4g}",
-                f"{results['variance_components']['reproducibility']:.4g}",
-                f"{results['variance_components']['grr']:.4g}",
-                f"{results['variance_components']['part']:.4g}",
-                f"{results['variance_components']['total']:.4g}"
-            ],
-            'Std Dev': [
-                f"{results['std_dev']['repeatability']:.4g}",
-                f"{results['std_dev']['reproducibility']:.4g}",
-                f"{results['std_dev']['grr']:.4g}",
-                f"{results['std_dev']['part']:.4g}",
-                f"{results['std_dev']['total']:.4g}"
-            ],
-            '%Contribution': [
-                f"{results['pct_contribution']['repeatability']:.4g}",
-                f"{results['pct_contribution']['reproducibility']:.4g}",
-                f"{results['pct_contribution']['grr']:.4g}",
-                f"{results['pct_contribution']['part']:.4g}",
-                "100.0"
-            ],
-            '%Study Var': [
-                f"{results['pct_study_var']['repeatability']:.4g}",
-                f"{results['pct_study_var']['reproducibility']:.4g}",
-                f"{results['pct_study_var']['grr']:.4g}",
-                f"{results['pct_study_var']['part']:.4g}",
-                "100.0"
-            ]
-        })
-        
+        if full_anova is not None:
+            full_anova.to_csv(f'{prefix}full_anova_table.csv', index=False)
+
+        variance_summary = create_variance_summary_df(results)
         print("\nVariance Components Summary:")
         print(variance_summary.to_string(index=False))
         
@@ -994,19 +836,25 @@ def main():
         
         # Save results to JSON
         results_dict = {
+            'study_type': results.get('study_type', 'gage_rr_type2'),
             'measurement': results['measurement'],
             'statistics': {
                 'n_parts': results['n_parts'],
                 'n_operators': results['n_operators'],
                 'n_measurements': results['n_measurements'],
-                'ndc': results['ndc']
+                'ndc': results['ndc'],
             },
             'variance_components': results['variance_components'],
             'std_dev': results['std_dev'],
             'study_var': results['study_var'],
             'pct_contribution': results['pct_contribution'],
-            'pct_study_var': results['pct_study_var']
+            'pct_study_var': results['pct_study_var'],
+            'acceptance': results.get('acceptance'),
         }
+        if results.get('pct_tolerance'):
+            results_dict['pct_tolerance'] = results['pct_tolerance']
+        if results.get('tolerance'):
+            results_dict['tolerance'] = results['tolerance']
         
         with open(f'{prefix}grr_results.json', 'w') as f:
             json.dump(results_dict, f, indent=2)
@@ -1027,6 +875,8 @@ def main():
             print(f"  - {prefix}algo_by_operator.png")
         
         print(f"  - {prefix}anova_table.csv")
+        if full_anova is not None:
+            print(f"  - {prefix}full_anova_table.csv")
         print(f"  - {prefix}variance_components.csv")
         print(f"  - {prefix}grr_results.json")
     else:

@@ -242,45 +242,39 @@ def get_measurement_columns(df: pd.DataFrame) -> List[str]:
 
 
 def assign_operators_sequential(df: pd.DataFrame, n_operators: int = 3) -> pd.DataFrame:
-    """
-    Assign operators sequentially to measurements for ANOVA analysis.
-    
-    Args:
-        df: Input DataFrame
-        n_operators: Number of operators (default: 3)
-        
-    Returns:
-        DataFrame with Operator and Part columns added
-    """
-    # Clamp operator count into [1, 10]
-    try:
-        n = int(n_operators)
-    except Exception:
-        n = 3
-    n = max(1, min(n, 10))
-    if len(df) == 0:
-        return df
-    operators = [chr(ord('A') + i) for i in range(n)]
-    
-    print(f"\nAssigning operators sequentially (every {n} consecutive measurements = 1 part)...")
-    
-    # Assign operator based on position mod n_operators
-    df['Operator'] = [operators[i % n] for i in range(len(df))]
-    
-    # Create Part ID: every n_operators consecutive measurements belong to the same part
-    df['Part_ID'] = np.arange(len(df)) // n
-    df['Part'] = 'Part_' + df['Part_ID'].astype(str)
-    
-    print(f"Operator distribution:")
-    print(df['Operator'].value_counts().sort_index())
-    print(f"\nTotal unique parts (measurement groups): {df['Part'].nunique()}")
-    
-    # Show sample for verification
-    print(f"\nSample assignment (first 12 rows):")
-    sample_data = df[['Component', 'Part', 'Operator']].head(12)
-    print(sample_data.to_string(index=False))
-    
-    return df
+    """Assign Part/Operator sequentially (delegates to grr_tool.msa.design)."""
+    from grr_tool.msa.design import assign_operators_sequential as _assign
+
+    result = _assign(df, n_operators=n_operators)
+    if len(result) > 0:
+        n = max(1, min(int(n_operators), 10))
+        print(f"\nAssigning operators sequentially (every {n} consecutive measurements = 1 part)...")
+        print("Operator distribution:")
+        print(result["Operator"].value_counts().sort_index())
+        print(f"\nTotal unique parts: {result['Part'].nunique()}")
+        cols = [c for c in ("Component", "Part", "Operator") if c in result.columns]
+        if cols:
+            print("\nSample assignment (first 12 rows):")
+            print(result[cols].head(12).to_string(index=False))
+    return result
+
+
+def apply_study_design(df, mode=None, n_operators: int = 3, part_col=None, operator_col=None, replicate_col=None):
+    """Apply MSA study design (sequential, columns, or comp_name)."""
+    from grr_tool.msa.design import DesignMode, apply_study_design as _apply
+
+    if mode is None:
+        mode = DesignMode.SEQUENTIAL
+    elif isinstance(mode, str):
+        mode = DesignMode(mode)
+    return _apply(
+        df,
+        mode=mode,
+        n_operators=n_operators,
+        part_col=part_col,
+        operator_col=operator_col,
+        replicate_col=replicate_col,
+    )
 
 
 def _parse_args_for_cli():

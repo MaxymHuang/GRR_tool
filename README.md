@@ -18,13 +18,14 @@ A Python application for performing ANOVA-based Gage R&R (Repeatability and Repr
 ### Using uv (recommended)
 
 ```bash
-uv pip install -r requirements.txt
+uv sync
 ```
 
-### Using pip
+### Running tests
 
 ```bash
-pip install -r requirements.txt
+uv sync --extra dev
+uv run pytest tests/ -q
 ```
 
 ### Standalone data parser app (forked copy)
@@ -51,7 +52,21 @@ Use `--include`, `--exclude`, `--operator`, and `-o` / `--output` for CLI mode, 
 - **Data Parser (standalone):** `uv run python scripts/build_data_parser_windows.py` — output `dist/windows-data-parser/DataParser.exe` (`DataParser.spec`). Built as a windowed app (GUI); for CLI with printed output, use `uv run python -m data_parser_app -f ...` from source
 - Pass `--debug` to either script for verbose PyInstaller logs when troubleshooting
 
-## Usage (Type I ANOVA Script)
+## Desktop app (PySide6)
+
+Launch from the repo root:
+
+```bash
+uv run python app/main.py
+```
+
+**Gage R&R (Type 2)** tab: tolerance (`Off` = none), design (`sequential`, `comp_name`, `columns` with Part/Operator column pickers), method (`anova`, `xbar_r`, `nested`), repro mode, include/exclude filters. Results show acceptance verdict, summary, variance breakdown, full ANOVA (anova only), and charts (anova only). **Export Results…** writes the same CSV/JSON as the CLI.
+
+**Type 1 Gage** tab: tolerance/target (Auto or explicit), optional **Require explicit tolerance & target**, verdict panel with %Var metrics, export.
+
+**Parsing** tab: prepared export applies **Design** (`sequential` or `comp_name`) so saved CSVs match Type 2 analysis expectations.
+
+## Usage (Gage R&R Type 2 Script)
 
 ### Command Line Interface
 
@@ -71,7 +86,13 @@ python gage_rr_analysis.py --algo Solder_Area_Layer1
 # Custom study variation multiplier (default: 6.0)
 python gage_rr_analysis.py --sv 5.15
 
-# Custom alpha value for confidence intervals (default: 0.25)
+# Tolerance for %GRR(Tol) metrics
+python gage_rr_analysis.py --tol 0.5 --algo Solder_ThicknessN1_Layer3
+
+# Study design: use Comp_Name as parts
+python gage_rr_analysis.py --design comp_name
+
+# Custom alpha for variance component CIs (default: 0.025)
 python gage_rr_analysis.py --av 0.05
 
 # Specify input file
@@ -95,14 +116,19 @@ python gage_rr_analysis.py --exclude C100_1,C100_2 --algo Solder_ThicknessN1_Lay
 python gage_rr_analysis.py -f data.txt --algo Solder_Area_Layer2 --sv 5.15 --av 0.05 -o output_
 ```
 
-### Command Line Arguments (Type I ANOVA)
+### Command Line Arguments (Gage R&R Type 2)
 
 | Argument | Alias | Default | Description |
 |----------|-------|---------|-------------|
 | `-f FILE` | `--file` | `EMI_20um_SV.txt` | Input data file path |
 | `--algo ALGO` | `--algorithm` | `Solder_ThicknessN1_Layer3` | Measurement column to analyze |
 | `--sv SV` | `--study-var` | `6.0` | Study variation multiplier (typically 5.15 or 6.0) |
-| `--av AV` | `--alpha` | `0.025` | Alpha value for confidence intervals |
+| `--tol` | | | Total tolerance width for %GRR(Tol) |
+| `--design` | | `sequential` | `sequential`, `comp_name`, or `columns` |
+| `--part-col` / `--operator-col` | | | Column mapping when `--design columns` |
+| `--repro-mode` | | `operator_only` | `operator_plus_interaction` optional |
+| `--method` | | `anova` | `anova`, `xbar_r`, or `nested` |
+| `--av AV` | `--alpha` | `0.025` | Alpha for variance component confidence intervals |
 | `-o PREFIX` | `--output-prefix` | `` | Prefix for output files |
 | `-m` | `--merge` | | Merge all 4 charts into a single image |
 | `-p` | `--parse` | | Parse and save cleaned data to CSV file, then exit (no analysis) |
@@ -129,7 +155,8 @@ The application generates the following files:
 - `merged_analysis.png` - All 4 charts combined (when using `-m` flag)
 
 #### Data Files
-- `anova_table.csv` - ANOVA summary table (similar to HTML report format)
+- `anova_table.csv` - Gage R&R summary (%SV and %GRR(Tol) when tolerance set)
+- `full_anova_table.csv` - Full ANOVA with DF, SS, MS, F, p-value
 - `variance_components.csv` - Detailed variance component breakdown
 - `grr_results.json` - Complete analysis results in JSON format
 - `parsed_data.csv` - Cleaned and formatted raw data (when using `-p` flag)
@@ -172,7 +199,9 @@ python gage_rr_type1.py --include C100_1 --algo Solder_ThicknessN1_Layer3
 ### Defaults and flags (Type 1)
 
 - Default target: dataset median for the selected component
-- Default tolerance: 6 × sd × 1.33 / 0.2
+- Default tolerance (exploratory): 6 × sd × 1.33 / 0.2 — use explicit `--tol` and `--target` for production
+- Metrics include `%Var_repeat` and `%Var_repeat_bias` (SPC for Excel)
+- `--require-reference`: require explicit `--tol` and `--target`
 - `--component` is required unless a single component is provided via `--include`
 - `--display-comp`: prints up to 60 component names in one row and exits
 - `--include`/`--exclude`: filter by `Comp_Name` (space- or comma-separated lists), applied before selection
